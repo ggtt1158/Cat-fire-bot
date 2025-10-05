@@ -1399,373 +1399,69 @@
         const db = firebase.firestore();
         const rtdb = firebase.database();
 
-        // Telegram Web App
-        const tg = window.Telegram.WebApp;
-        tg.expand();
-        tg.ready();
-
-        // Global Variables
+        // Global variables
         let currentUser = null;
-        let userData = null;
+        let currentUserData = null; // Renamed from userData to currentUserData
         let adminSettings = null;
-        let selectedBet = 'medium';
-        let isSpinning = false;
+        let currentPage = 'home'; // Added to track current page
+        let selectedBet = 'medium'; // Moved from original location
+        let isSpinning = false; // Moved from original location
 
-        async function detectVPN() {
-            try {
-                const response = await fetch('https://ipapi.co/json/');
-                const data = await response.json();
-                
-                console.log('[v0] IP Info:', data);
-                
-                // Check for VPN indicators
-                if (data.org && (
-                    data.org.toLowerCase().includes('vpn') ||
-                    data.org.toLowerCase().includes('proxy') ||
-                    data.org.toLowerCase().includes('hosting') ||
-                    data.org.toLowerCase().includes('datacenter')
-                )) {
-                    document.getElementById('vpnWarning').classList.add('active');
-                    return true;
-                }
-                return false;
-            } catch (error) {
-                console.log('[v0] VPN detection error:', error);
-                return false;
-            }
+        // Telegram WebApp
+        const tg = window.Telegram.WebApp;
+
+        // Helper Functions
+        function showLoading() {
+            document.getElementById('loadingScreen').classList.remove('hidden');
         }
 
-        async function initApp() {
-            console.log('[v0] Initializing app...');
-            console.log('[v0] Telegram WebApp available:', !!window.Telegram?.WebApp);
-            
-            try {
-                // Detect VPN
-                const hasVPN = await detectVPN();
-                if (hasVPN) {
-                    document.getElementById('loadingScreen').classList.add('hidden');
-                    return;
-                }
-
-                // Get Telegram user data
-                const telegramUser = tg.initDataUnsafe?.user;
-                
-                console.log('[v0] Telegram initDataUnsafe:', tg.initDataUnsafe);
-                console.log('[v0] Telegram user:', telegramUser);
-
-                if (!telegramUser || !telegramUser.id) {
-                    console.error('[v0] No Telegram user data available');
-                    showNotification('Unable to get Telegram data. Please open this app from Telegram.', 'error');
-                    document.getElementById('loadingScreen').classList.add('hidden');
-                    return;
-                }
-
-                console.log('[v0] Telegram user ID:', telegramUser.id);
-
-                // Authenticate with Firebase
-                await authenticateUser(telegramUser);
-                console.log('[v0] Authentication complete');
-
-                // Load admin settings
-                await loadAdminSettings();
-                console.log('[v0] Admin settings loaded');
-
-                // Load user data
-                await loadUserData();
-                console.log('[v0] User data loaded');
-
-                // Check referral
-                await checkReferral();
-                console.log('[v0] Referral checked');
-
-                // Update UI
-                updateUI();
-                console.log('[v0] UI updated');
-
-                // Show welcome modal for new users
-                if (userData.createdAt && isToday(userData.createdAt.toDate())) {
-                    showWelcomeModal();
-                }
-
-                // Hide loading screen
-                document.getElementById('loadingScreen').classList.add('hidden');
-                console.log('[v0] App initialized successfully');
-
-            } catch (error) {
-                console.error('[v0] Initialization error:', error);
-                showNotification('Error initializing app: ' + error.message, 'error');
-                document.getElementById('loadingScreen').classList.add('hidden');
-            }
+        function hideLoading() {
+            document.getElementById('loadingScreen').classList.add('hidden');
         }
 
-        async function authenticateUser(telegramUser) {
-            const email = `user${telegramUser.id}@catfire.app`;
-            const password = `catfire_${telegramUser.id}_secure`;
-
-            console.log('[v0] Authenticating user:', email);
-
-            try {
-                // Try to sign in
-                await auth.signInWithEmailAndPassword(email, password);
-                console.log('[v0] User signed in successfully');
-            } catch (error) {
-                console.log('[v0] Sign in error:', error.code);
-                
-                if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
-                    console.log('[v0] Creating new user account...');
-                    
-                    try {
-                        // Create new user
-                        await auth.createUserWithEmailAndPassword(email, password);
-                        console.log('[v0] New user created successfully');
-                        
-                        // Initialize user data
-                        await initializeUserData(telegramUser);
-                        console.log('[v0] User data initialized');
-                    } catch (createError) {
-                        console.error('[v0] Error creating user:', createError);
-                        throw createError;
-                    }
-                } else {
-                    throw error;
-                }
-            }
-
-            currentUser = auth.currentUser;
-            console.log('[v0] Current user set:', currentUser?.uid);
+        function showVPNWarning() {
+            document.getElementById('vpnWarning').classList.add('active');
+            hideLoading();
         }
 
-        async function initializeUserData(telegramUser) {
-            const userId = telegramUser.id.toString();
-            const referrerId = getReferrerFromUrl();
-            
-            console.log('[v0] Initializing user data for:', userId);
-            console.log('[v0] Referrer ID:', referrerId);
-            
-            let signupBonus = 1.00; // Default bonus
-            
-            // Check if referred
-            if (referrerId && referrerId !== userId) {
-                signupBonus = 2.00; // Referred user bonus
-                console.log('[v0] User was referred, bonus increased to:', signupBonus);
-                
-                // Update referrer
-                await updateReferrer(referrerId, userId, telegramUser.first_name);
-            }
-
-            const userData = {
-                telegramId: userId,
-                firstName: telegramUser.first_name || 'User',
-                lastName: telegramUser.last_name || '',
-                username: telegramUser.username || '',
-                balance: signupBonus,
-                taskEarnings: signupBonus,
-                gameEarnings: 0,
-                referralEarnings: 0,
-                totalReferrals: 0,
-                referrerId: referrerId || null,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
-                isBlocked: false,
-                dailyTasks: {
-                    monetag: { count: 0, lastReset: new Date().toDateString() },
-                    directLink: { count: 0, lastReset: new Date().toDateString() },
-                    youtube: { count: 0, lastReset: new Date().toDateString() },
-                    loginBonus: { claimed: false, lastClaim: null },
-                    spin: { count: 0, lastReset: new Date().toDateString() }
-                },
-                oneTimeTasks: {
-                    telegram: false,
-                    youtubeSub: false
-                },
-                withdrawals: [],
-                referrals: []
-            };
-
-            await db.collection('users').doc(userId).set(userData);
-            await rtdb.ref(`users/${userId}`).set({
-                online: true,
-                lastSeen: firebase.database.ServerValue.TIMESTAMP
-            });
-
-            console.log('[v0] User data initialized with bonus:', signupBonus);
+        function showError(message) {
+            showNotification(message, 'error');
+            hideLoading();
         }
 
-        // Get Referrer from URL
-        function getReferrerFromUrl() {
-            const urlParams = new URLSearchParams(window.location.search);
-            const startParam = urlParams.get('tgWebAppStartParam') || tg.initDataUnsafe?.start_param;
-            console.log('[v0] Start param:', startParam);
-            return startParam || null;
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
         }
 
-        // Update Referrer
-        async function updateReferrer(referrerId, newUserId, newUserName) {
-            try {
-                const referrerDoc = await db.collection('users').doc(referrerId).get();
-                
-                if (referrerDoc.exists) {
-                    const referrerData = referrerDoc.data();
-                    const referralBonus = adminSettings?.referralBonus || 1.00;
-                    
-                    await db.collection('users').doc(referrerId).update({
-                        balance: firebase.firestore.FieldValue.increment(referralBonus),
-                        referralEarnings: firebase.firestore.FieldValue.increment(referralBonus),
-                        totalReferrals: firebase.firestore.FieldValue.increment(1),
-                        referrals: firebase.firestore.FieldValue.arrayUnion({
-                            userId: newUserId,
-                            name: newUserName,
-                            date: new Date().toISOString(),
-                            earned: referralBonus
-                        })
-                    });
-
-                    console.log('[v0] Referrer updated with bonus:', referralBonus);
-                    
-                    // Send notification to referrer via Telegram bot
-                    await sendTelegramNotification(referrerId, `🎉 New Referral! ${newUserName} joined using your link. You earned $${referralBonus}!`);
-                }
-            } catch (error) {
-                console.error('[v0] Error updating referrer:', error);
-            }
+        function isToday(date) {
+            const today = new Date();
+            return date.getDate() === today.getDate() &&
+                   date.getMonth() === today.getMonth() &&
+                   date.getFullYear() === today.getFullYear();
         }
 
-        // Load Admin Settings
-        async function loadAdminSettings() {
-            try {
-                const settingsDoc = await db.collection('settings').doc('admin').get();
-                
-                if (settingsDoc.exists) {
-                    adminSettings = settingsDoc.data();
-                    console.log('[v0] Admin settings loaded:', adminSettings);
-                } else {
-                    // Create default settings
-                    adminSettings = {
-                        monetagReward: 0.05,
-                        monetagLimit: 10,
-                        directLinkReward: 0.10,
-                        youtubeReward: 0.15,
-                        loginBonusReward: 0.20,
-                        telegramBonusReward: 0.50,
-                        youtubeSubBonusReward: 0.50,
-                        minWithdraw: 5.00,
-                        referralBonus: 1.00,
-                        referredBonus: 2.00,
-                        paymentMethods: ['PayPal', 'Payoneer'],
-                        directLinks: [],
-                        youtubeVideos: [],
-                        telegramChannel: '',
-                        youtubeChannel: '',
-                        spinEnabled: true,
-                        dailySpinLimit: 10
-                    };
-                    
-                    await db.collection('settings').doc('admin').set(adminSettings);
-                    console.log('[v0] Default admin settings created');
-                }
-            } catch (error) {
-                console.error('[v0] Error loading admin settings:', error);
-                throw error;
-            }
-        }
-
-        // Load User Data
-        async function loadUserData() {
-            try {
-                const telegramUser = tg.initDataUnsafe?.user;
-                const userId = telegramUser.id.toString();
-                
-                console.log('[v0] Loading user data for:', userId);
-                
-                const userDoc = await db.collection('users').doc(userId).get();
-                
-                if (userDoc.exists) {
-                    userData = userDoc.data();
-                    console.log('[v0] User data loaded:', userData);
-                    
-                    // Update last login
-                    await db.collection('users').doc(userId).update({
-                        lastLogin: firebase.firestore.FieldValue.serverTimestamp()
-                    });
-                    
-                    // Reset daily tasks if needed
-                    await resetDailyTasks();
-                } else {
-                    console.error('[v0] User document not found');
-                    throw new Error('User data not found');
-                }
-            } catch (error) {
-                console.error('[v0] Error loading user data:', error);
-                throw error;
-            }
-        }
-
-        // Reset Daily Tasks
-        async function resetDailyTasks() {
-            const today = new Date().toDateString();
-            let needsUpdate = false;
-            const updates = {};
-
-            if (userData.dailyTasks.monetag.lastReset !== today) {
-                updates['dailyTasks.monetag'] = { count: 0, lastReset: today };
-                needsUpdate = true;
-            }
-
-            if (userData.dailyTasks.directLink.lastReset !== today) {
-                updates['dailyTasks.directLink'] = { count: 0, lastReset: today };
-                needsUpdate = true;
-            }
-
-            if (userData.dailyTasks.youtube.lastReset !== today) {
-                updates['dailyTasks.youtube'] = { count: 0, lastReset: today };
-                needsUpdate = true;
-            }
-
-            if (userData.dailyTasks.spin.lastReset !== today) {
-                updates['dailyTasks.spin'] = { count: 0, lastReset: today };
-                needsUpdate = true;
-            }
-
-            const lastClaim = userData.dailyTasks.loginBonus.lastClaim;
-            if (lastClaim && !isToday(new Date(lastClaim))) {
-                updates['dailyTasks.loginBonus.claimed'] = false;
-                needsUpdate = true;
-            }
-
-            if (needsUpdate) {
-                const userId = userData.telegramId;
-                await db.collection('users').doc(userId).update(updates);
-                
-                // Reload user data
-                const userDoc = await db.collection('users').doc(userId).get();
-                userData = userDoc.data();
-                
-                console.log('[v0] Daily tasks reset');
-            }
-        }
-
-        // Check Referral
-        async function checkReferral() {
-            // This function is called after user data is loaded
-            // Referral logic is already handled in initializeUserData
-            console.log('[v0] Referral check complete');
-        }
-
-        // Update UI
+        // Encapsulate UI update logic
         function updateUI() {
-            if (!userData) {
-                console.error('[v0] Cannot update UI: userData is null');
+            if (!currentUserData) {
+                console.error('[v0] Cannot update UI: currentUserData is null');
                 return;
             }
 
             console.log('[v0] Updating UI with user data');
 
             // Header
-            document.getElementById('userName').textContent = userData.firstName;
-            document.getElementById('userId').textContent = `ID: ${userData.telegramId}`;
+            document.getElementById('userName').textContent = currentUserData.firstName;
+            document.getElementById('userId').textContent = `ID: ${currentUserData.telegramId}`;
 
             // Balance
-            document.getElementById('userBalance').textContent = userData.balance.toFixed(2);
+            document.getElementById('userBalance').textContent = currentUserData.balance.toFixed(2);
 
             // Task rewards and limits
             if (adminSettings) {
@@ -1798,22 +1494,22 @@
             updateOneTimeTasks();
 
             // Spin count
-            document.getElementById('todaySpins').textContent = userData.dailyTasks.spin.count;
+            document.getElementById('todaySpins').textContent = currentUserData.dailyTasks.spin.count;
 
             // Profile page
-            document.getElementById('profileName').textContent = userData.firstName + ' ' + userData.lastName;
-            document.getElementById('profileUsername').textContent = userData.username ? `@${userData.username}` : 'No username';
-            document.getElementById('profileId').textContent = `ID: ${userData.telegramId}`;
-            document.getElementById('profileBalance').textContent = userData.balance.toFixed(2);
-            document.getElementById('profileTaskEarnings').textContent = `$${userData.taskEarnings.toFixed(2)}`;
-            document.getElementById('profileGameEarnings').textContent = `$${userData.gameEarnings.toFixed(2)}`;
-            document.getElementById('profileReferralCount').textContent = userData.totalReferrals;
+            document.getElementById('profileName').textContent = currentUserData.firstName + ' ' + currentUserData.lastName;
+            document.getElementById('profileUsername').textContent = currentUserData.username ? `@${currentUserData.username}` : 'No username';
+            document.getElementById('profileId').textContent = `ID: ${currentUserData.telegramId}`;
+            document.getElementById('profileBalance').textContent = currentUserData.balance.toFixed(2);
+            document.getElementById('profileTaskEarnings').textContent = `$${currentUserData.taskEarnings.toFixed(2)}`;
+            document.getElementById('profileGameEarnings').textContent = `$${currentUserData.gameEarnings.toFixed(2)}`;
+            document.getElementById('profileReferralCount').textContent = currentUserData.totalReferrals;
 
             // Referral page
-            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${userData.telegramId}`;
+            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${currentUserData.telegramId}`;
             document.getElementById('referralLink').textContent = referralLink;
-            document.getElementById('totalReferrals').textContent = userData.totalReferrals;
-            document.getElementById('referralEarnings').textContent = userData.referralEarnings.toFixed(2);
+            document.getElementById('totalReferrals').textContent = currentUserData.totalReferrals;
+            document.getElementById('referralEarnings').textContent = currentUserData.referralEarnings.toFixed(2);
 
             // Load referral list
             loadReferralList();
@@ -1833,96 +1529,27 @@
             console.log('[v0] UI update complete');
         }
 
-        // Update Task Progress
-        function updateTaskProgress() {
-            // Monetag
-            const monetagCount = userData.dailyTasks.monetag.count;
-            const monetagLimit = adminSettings.monetagLimit;
-            const monetagProgress = (monetagCount / monetagLimit) * 100;
-            document.getElementById('monetagCount').textContent = monetagCount;
-            document.getElementById('monetagProgress').style.width = monetagProgress + '%';
+        // Function to display welcome message based on referral status
+        function showWelcomeMessage() {
+            if (!currentUserData) return;
+
+            let message = 'Welcome to Cat Fire! Complete tasks and earn money.';
             
-            const monetagBtn = document.getElementById('monetagBtn');
-            if (monetagCount >= monetagLimit) {
-                monetagBtn.classList.remove('active');
-                monetagBtn.classList.add('completed');
-                monetagBtn.textContent = 'Completed';
-                monetagBtn.disabled = true;
+            if (currentUserData.referrerId && currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referredBonus?.toFixed(2) || 2.00} as referral bonus!`;
+            } else if (currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referralBonus?.toFixed(2) || 1.00} as signup bonus!`;
             }
 
-            // Direct Link
-            const directLinkCount = userData.dailyTasks.directLink.count;
-            const directLinkProgress = (directLinkCount / 3) * 100;
-            document.getElementById('directLinkCount').textContent = directLinkCount;
-            document.getElementById('directLinkProgress').style.width = directLinkProgress + '%';
-            
-            const directLinkBtn = document.getElementById('directLinkBtn');
-            if (directLinkCount >= 3) {
-                directLinkBtn.classList.remove('active');
-                directLinkBtn.classList.add('completed');
-                directLinkBtn.textContent = 'Completed';
-                directLinkBtn.disabled = true;
-            }
-
-            // YouTube
-            const youtubeCount = userData.dailyTasks.youtube.count;
-            const youtubeProgress = (youtubeCount / 3) * 100;
-            document.getElementById('youtubeCount').textContent = youtubeCount;
-            document.getElementById('youtubeProgress').style.width = youtubeProgress + '%';
-            
-            const youtubeBtn = document.getElementById('youtubeBtn');
-            if (youtubeCount >= 3) {
-                youtubeBtn.classList.remove('active');
-                youtubeBtn.classList.add('completed');
-                youtubeBtn.textContent = 'Completed';
-                youtubeBtn.disabled = true;
-            }
-
-            // Login Bonus
-            const loginBonusBtn = document.getElementById('loginBonusBtn');
-            if (userData.dailyTasks.loginBonus.claimed) {
-                loginBonusBtn.classList.remove('active');
-                loginBonusBtn.classList.add('completed');
-                loginBonusBtn.textContent = 'Claimed';
-                loginBonusBtn.disabled = true;
-            }
-        }
-
-        // Update One-Time Tasks
-        function updateOneTimeTasks() {
-            const telegramBtn = document.getElementById('telegramBtn');
-            if (userData.oneTimeTasks.telegram) {
-                telegramBtn.classList.remove('active');
-                telegramBtn.classList.add('completed');
-                telegramBtn.textContent = 'Completed';
-                telegramBtn.disabled = true;
-            }
-
-            const youtubeSubBtn = document.getElementById('youtubeSubBtn');
-            if (userData.oneTimeTasks.youtubeSub) {
-                youtubeSubBtn.classList.remove('active');
-                youtubeSubBtn.classList.add('completed');
-                youtubeSubBtn.textContent = 'Completed';
-                youtubeSubBtn.disabled = true;
-            }
-        }
-
-        // Show Welcome Modal
-        function showWelcomeModal() {
-            const welcomeMessage = userData.referrerId 
-                ? `Welcome! You received $${adminSettings.referredBonus} as referral bonus!`
-                : `Welcome! You received $1.00 as signup bonus!`;
-            
-            document.getElementById('welcomeMessage').textContent = welcomeMessage;
+            document.getElementById('welcomeMessage').textContent = message;
             document.getElementById('welcomeModal').classList.add('active');
         }
 
-        // Close Welcome Modal
         function closeWelcomeModal() {
             document.getElementById('welcomeModal').classList.remove('active');
         }
 
-        // Show Page
+        // Modified to show active page and update navigation
         function showPage(pageId) {
             // Hide all pages
             document.querySelectorAll('.page').forEach(page => {
@@ -1931,6 +1558,7 @@
 
             // Show selected page
             document.getElementById(pageId).classList.add('active');
+            currentPage = pageId.replace('Page', '').toLowerCase(); // Update current page tracker
 
             // Update navigation
             document.querySelectorAll('.nav-item').forEach(item => {
@@ -1944,19 +1572,85 @@
             if (pageId === 'profilePage') navItems[3].classList.add('active');
         }
 
-        // Refresh Balance
-        async function refreshBalance() {
+        // Added checkVPN function
+        async function checkVPN() {
             try {
-                await loadUserData();
-                updateUI();
-                showNotification('Balance refreshed!', 'success');
+                console.log('[v0] Checking for VPN...');
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
+                
+                console.log('[v0] IP Info:', data);
+                
+                // Basic VPN/Proxy detection based on ASN or organization name
+                if (data.org && (
+                    data.org.toLowerCase().includes('vpn') ||
+                    data.org.toLowerCase().includes('proxy') ||
+                    data.org.toLowerCase().includes('hosting') ||
+                    data.org.toLowerCase().includes('datacenter') ||
+                    data.asn && data.asn.toLowerCase().includes('vpn')
+                )) {
+                    console.log('[v0] VPN/Proxy detected');
+                    return true;
+                }
+                console.log('[v0] No VPN detected');
+                return false;
             } catch (error) {
-                console.error('[v0] Error refreshing balance:', error);
-                showNotification('Error refreshing balance', 'error');
+                console.log('[v0] VPN detection error:', error);
+                return false; // Assume no VPN if detection fails
             }
         }
 
-        // Show Notification
+        // Initialize app when page loads
+        window.addEventListener('load', initApp);
+    </script>
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA7vbuDVd49qNePXsNCJrsMVmj-LCSH3R8",
+            authDomain: "cat-fire-bot.firebaseapp.com",
+            databaseURL: "https://cat-fire-bot-default-rtdb.firebaseio.com",
+            projectId: "cat-fire-bot",
+            storageBucket: "cat-fire-bot.firebasestorage.app",
+            messagingSenderId: "320717959791",
+            appId: "1:320717959791:web:8a6d191972cf263a7d939a"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const rtdb = firebase.database();
+
+        // Global variables
+        let currentUser = null;
+        let currentUserData = null; // Renamed from userData to currentUserData
+        let adminSettings = null;
+        let currentPage = 'home'; // Added to track current page
+        let selectedBet = 'medium'; // Moved from original location
+        let isSpinning = false; // Moved from original location
+
+        // Telegram WebApp
+        const tg = window.Telegram.WebApp;
+
+        // Helper Functions
+        function showLoading() {
+            document.getElementById('loadingScreen').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingScreen').classList.add('hidden');
+        }
+
+        function showVPNWarning() {
+            document.getElementById('vpnWarning').classList.add('active');
+            hideLoading();
+        }
+
+        function showError(message) {
+            showNotification(message, 'error');
+            hideLoading();
+        }
+
         function showNotification(message, type = 'success') {
             const notification = document.createElement('div');
             notification.className = `notification ${type}`;
@@ -1968,7 +1662,6 @@
             }, 3000);
         }
 
-        // Helper Functions
         function isToday(date) {
             const today = new Date();
             return date.getDate() === today.getDate() &&
@@ -1976,526 +1669,2377 @@
                    date.getFullYear() === today.getFullYear();
         }
 
-        // Send Telegram Notification
-        async function sendTelegramNotification(userId, message) {
-            try {
-                const botToken = '8343144296:AAGb6BkPFLDTvFEk06aDWfWhFIdh4cF8qjw';
-                const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
-                
-                await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        chat_id: userId,
-                        text: message
-                    })
-                });
-            } catch (error) {
-                console.error('[v0] Error sending Telegram notification:', error);
+        // Encapsulate UI update logic
+        function updateUI() {
+            if (!currentUserData) {
+                console.error('[v0] Cannot update UI: currentUserData is null');
+                return;
             }
+
+            console.log('[v0] Updating UI with user data');
+
+            // Header
+            document.getElementById('userName').textContent = currentUserData.firstName;
+            document.getElementById('userId').textContent = `ID: ${currentUserData.telegramId}`;
+
+            // Balance
+            document.getElementById('userBalance').textContent = currentUserData.balance.toFixed(2);
+
+            // Task rewards and limits
+            if (adminSettings) {
+                document.getElementById('monetagReward').textContent = adminSettings.monetagReward.toFixed(2);
+                document.getElementById('monetagLimit').textContent = adminSettings.monetagLimit;
+                document.getElementById('directLinkReward').textContent = adminSettings.directLinkReward.toFixed(2);
+                document.getElementById('youtubeReward').textContent = adminSettings.youtubeReward.toFixed(2);
+                document.getElementById('loginBonusReward').textContent = adminSettings.loginBonusReward.toFixed(2);
+                document.getElementById('telegramBonusReward').textContent = adminSettings.telegramBonusReward.toFixed(2);
+                document.getElementById('youtubeSubBonusReward').textContent = adminSettings.youtubeSubBonusReward.toFixed(2);
+                document.getElementById('minWithdraw').textContent = adminSettings.minWithdraw.toFixed(2);
+                document.getElementById('referralBonus').textContent = adminSettings.referralBonus.toFixed(2);
+                document.getElementById('referredBonus').textContent = adminSettings.referredBonus.toFixed(2);
+
+                // Payment methods
+                const paymentMethodSelect = document.getElementById('paymentMethod');
+                paymentMethodSelect.innerHTML = '<option value="">Select Method</option>';
+                adminSettings.paymentMethods.forEach(method => {
+                    const option = document.createElement('option');
+                    option.value = method;
+                    option.textContent = method;
+                    paymentMethodSelect.appendChild(option);
+                });
+            }
+
+            // Daily tasks progress
+            updateTaskProgress();
+
+            // One-time tasks
+            updateOneTimeTasks();
+
+            // Spin count
+            document.getElementById('todaySpins').textContent = currentUserData.dailyTasks.spin.count;
+
+            // Profile page
+            document.getElementById('profileName').textContent = currentUserData.firstName + ' ' + currentUserData.lastName;
+            document.getElementById('profileUsername').textContent = currentUserData.username ? `@${currentUserData.username}` : 'No username';
+            document.getElementById('profileId').textContent = `ID: ${currentUserData.telegramId}`;
+            document.getElementById('profileBalance').textContent = currentUserData.balance.toFixed(2);
+            document.getElementById('profileTaskEarnings').textContent = `$${currentUserData.taskEarnings.toFixed(2)}`;
+            document.getElementById('profileGameEarnings').textContent = `$${currentUserData.gameEarnings.toFixed(2)}`;
+            document.getElementById('profileReferralCount').textContent = currentUserData.totalReferrals;
+
+            // Referral page
+            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${currentUserData.telegramId}`;
+            document.getElementById('referralLink').textContent = referralLink;
+            document.getElementById('totalReferrals').textContent = currentUserData.totalReferrals;
+            document.getElementById('referralEarnings').textContent = currentUserData.referralEarnings.toFixed(2);
+
+            // Load referral list
+            loadReferralList();
+
+            // Load withdrawal history
+            loadWithdrawalHistory();
+
+            // Load top withdrawers
+            loadTopWithdrawers();
+
+            // Draw spin wheel
+            drawSpinWheel();
+
+            // Draw earnings chart
+            drawEarningsChart();
+
+            console.log('[v0] UI update complete');
         }
 
-        // Spin Wheel Functions
-        function selectBet(bet) {
-            selectedBet = bet;
-            document.querySelectorAll('.bet-btn').forEach(btn => {
-                btn.classList.remove('selected');
-            });
-            document.querySelector(`[data-bet="${bet}"]`).classList.add('selected');
-        }
+        // Function to display welcome message based on referral status
+        function showWelcomeMessage() {
+            if (!currentUserData) return;
 
-        function drawSpinWheel() {
-            const canvas = document.getElementById('wheelCanvas');
-            const ctx = canvas.getContext('2d');
-            const centerX = canvas.width / 2;
-            const centerY = canvas.height / 2;
-            const radius = 140;
-
-            const segments = [
-                { value: 1, color: '#FF6B6B', label: '$1' },
-                { value: 2, color: '#4ECDC4', label: '$2' },
-                { value: 5, color: '#45B7D1', label: '$5' },
-                { value: 10, color: '#FFA07A', label: '$10' },
-                { value: 100, color: '#98D8C8', label: '$100' },
-                { value: 0, color: '#95A5A6', label: '$0' }
-            ];
-
-            const anglePerSegment = (2 * Math.PI) / segments.length;
-
-            segments.forEach((segment, index) => {
-                const startAngle = index * anglePerSegment;
-                const endAngle = startAngle + anglePerSegment;
-
-                ctx.beginPath();
-                ctx.moveTo(centerX, centerY);
-                ctx.arc(centerX, centerY, radius, startAngle, endAngle);
-                ctx.closePath();
-                ctx.fillStyle = segment.color;
-                ctx.fill();
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 3;
-                ctx.stroke();
-
-                // Draw text
-                ctx.save();
-                ctx.translate(centerX, centerY);
-                ctx.rotate(startAngle + anglePerSegment / 2);
-                ctx.textAlign = 'center';
-                ctx.fillStyle = '#fff';
-                ctx.font = 'bold 20px Arial';
-                ctx.fillText(segment.label, radius / 1.5, 10);
-                ctx.restore();
-            });
-        }
-
-        async function spinWheel() {
-            if (isSpinning) return;
+            let message = 'Welcome to Cat Fire! Complete tasks and earn money.';
             
-            const spinCount = userData.dailyTasks.spin.count;
-            const spinLimit = adminSettings.dailySpinLimit;
-
-            if (spinCount >= spinLimit) {
-                showNotification('Daily spin limit reached!', 'warning');
-                return;
+            if (currentUserData.referrerId && currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referredBonus?.toFixed(2) || 2.00} as referral bonus!`;
+            } else if (currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referralBonus?.toFixed(2) || 1.00} as signup bonus!`;
             }
 
-            const betAmounts = { low: 0.10, medium: 0.50, high: 1.00 };
-            const betAmount = betAmounts[selectedBet];
+            document.getElementById('welcomeMessage').textContent = message;
+            document.getElementById('welcomeModal').classList.add('active');
+        }
 
-            if (userData.balance < betAmount) {
-                showNotification('Insufficient balance!', 'error');
-                return;
-            }
+        function closeWelcomeModal() {
+            document.getElementById('welcomeModal').classList.remove('active');
+        }
 
-            isSpinning = true;
-
-            // Deduct bet amount
-            await db.collection('users').doc(userData.telegramId).update({
-                balance: firebase.firestore.FieldValue.increment(-betAmount)
+        // Modified to show active page and update navigation
+        function showPage(pageId) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
             });
 
-            const canvas = document.getElementById('wheelCanvas');
-            const segments = [1, 2, 5, 10, 100, 0];
-            const randomIndex = Math.floor(Math.random() * segments.length);
-            const winAmount = segments[randomIndex];
+            // Show selected page
+            document.getElementById(pageId).classList.add('active');
+            currentPage = pageId.replace('Page', '').toLowerCase(); // Update current page tracker
 
-            const rotations = 5;
-            const anglePerSegment = 360 / segments.length;
-            const targetAngle = (rotations * 360) + (randomIndex * anglePerSegment);
+            // Update navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
 
-            canvas.style.transition = 'transform 3s ease-out';
-            canvas.style.transform = `rotate(${targetAngle}deg)`;
+            const navItems = document.querySelectorAll('.nav-item');
+            if (pageId === 'homePage') navItems[0].classList.add('active');
+            if (pageId === 'withdrawPage') navItems[1].classList.add('active');
+            if (pageId === 'referPage') navItems[2].classList.add('active');
+            if (pageId === 'profilePage') navItems[3].classList.add('active');
+        }
 
-            setTimeout(async () => {
-                const finalAmount = winAmount * (selectedBet === 'low' ? 1 : selectedBet === 'medium' ? 2 : 3);
+        // Added checkVPN function
+        async function checkVPN() {
+            try {
+                console.log('[v0] Checking for VPN...');
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
                 
-                await db.collection('users').doc(userData.telegramId).update({
-                    balance: firebase.firestore.FieldValue.increment(finalAmount),
-                    gameEarnings: firebase.firestore.FieldValue.increment(finalAmount),
-                    'dailyTasks.spin.count': firebase.firestore.FieldValue.increment(1)
-                });
-
-                await loadUserData();
-                updateUI();
-
-                showNotification(`You won $${finalAmount.toFixed(2)}!`, 'success');
+                console.log('[v0] IP Info:', data);
                 
-                canvas.style.transition = 'none';
-                canvas.style.transform = 'rotate(0deg)';
-                
-                isSpinning = false;
+                // Basic VPN/Proxy detection based on ASN or organization name
+                if (data.org && (
+                    data.org.toLowerCase().includes('vpn') ||
+                    data.org.toLowerCase().includes('proxy') ||
+                    data.org.toLowerCase().includes('hosting') ||
+                    data.org.toLowerCase().includes('datacenter') ||
+                    data.asn && data.asn.toLowerCase().includes('vpn')
+                )) {
+                    console.log('[v0] VPN/Proxy detected');
+                    return true;
+                }
+                console.log('[v0] No VPN detected');
+                return false;
+            } catch (error) {
+                console.log('[v0] VPN detection error:', error);
+                return false; // Assume no VPN if detection fails
+            }
+        }
+
+        // Initialize app when page loads
+        window.addEventListener('load', initApp);
+    </script>
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA7vbuDVd49qNePXsNCJrsMVmj-LCSH3R8",
+            authDomain: "cat-fire-bot.firebaseapp.com",
+            databaseURL: "https://cat-fire-bot-default-rtdb.firebaseio.com",
+            projectId: "cat-fire-bot",
+            storageBucket: "cat-fire-bot.firebasestorage.app",
+            messagingSenderId: "320717959791",
+            appId: "1:320717959791:web:8a6d191972cf263a7d939a"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const rtdb = firebase.database();
+
+        // Global variables
+        let currentUser = null;
+        let currentUserData = null; // Renamed from userData to currentUserData
+        let adminSettings = null;
+        let currentPage = 'home'; // Added to track current page
+        let selectedBet = 'medium'; // Moved from original location
+        let isSpinning = false; // Moved from original location
+
+        // Telegram WebApp
+        const tg = window.Telegram.WebApp;
+
+        // Helper Functions
+        function showLoading() {
+            document.getElementById('loadingScreen').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingScreen').classList.add('hidden');
+        }
+
+        function showVPNWarning() {
+            document.getElementById('vpnWarning').classList.add('active');
+            hideLoading();
+        }
+
+        function showError(message) {
+            showNotification(message, 'error');
+            hideLoading();
+        }
+
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
             }, 3000);
         }
 
-        // Task Functions
-        async function watchMonetagAd() {
-            const count = userData.dailyTasks.monetag.count;
-            const limit = adminSettings.monetagLimit;
+        function isToday(date) {
+            const today = new Date();
+            return date.getDate() === today.getDate() &&
+                   date.getMonth() === today.getMonth() &&
+                   date.getFullYear() === today.getFullYear();
+        }
 
-            if (count >= limit) {
-                showNotification('Daily limit reached!', 'warning');
+        // Encapsulate UI update logic
+        function updateUI() {
+            if (!currentUserData) {
+                console.error('[v0] Cannot update UI: currentUserData is null');
                 return;
             }
 
-            // Show Monetag ad (already loaded via SDK)
-            showNotification('Ad loading...', 'success');
+            console.log('[v0] Updating UI with user data');
 
-            // Simulate ad completion (in real scenario, this would be triggered by Monetag SDK)
-            setTimeout(async () => {
-                const reward = adminSettings.monetagReward;
-                
-                await db.collection('users').doc(userData.telegramId).update({
-                    balance: firebase.firestore.FieldValue.increment(reward),
-                    taskEarnings: firebase.firestore.FieldValue.increment(reward),
-                    'dailyTasks.monetag.count': firebase.firestore.FieldValue.increment(1)
+            // Header
+            document.getElementById('userName').textContent = currentUserData.firstName;
+            document.getElementById('userId').textContent = `ID: ${currentUserData.telegramId}`;
+
+            // Balance
+            document.getElementById('userBalance').textContent = currentUserData.balance.toFixed(2);
+
+            // Task rewards and limits
+            if (adminSettings) {
+                document.getElementById('monetagReward').textContent = adminSettings.monetagReward.toFixed(2);
+                document.getElementById('monetagLimit').textContent = adminSettings.monetagLimit;
+                document.getElementById('directLinkReward').textContent = adminSettings.directLinkReward.toFixed(2);
+                document.getElementById('youtubeReward').textContent = adminSettings.youtubeReward.toFixed(2);
+                document.getElementById('loginBonusReward').textContent = adminSettings.loginBonusReward.toFixed(2);
+                document.getElementById('telegramBonusReward').textContent = adminSettings.telegramBonusReward.toFixed(2);
+                document.getElementById('youtubeSubBonusReward').textContent = adminSettings.youtubeSubBonusReward.toFixed(2);
+                document.getElementById('minWithdraw').textContent = adminSettings.minWithdraw.toFixed(2);
+                document.getElementById('referralBonus').textContent = adminSettings.referralBonus.toFixed(2);
+                document.getElementById('referredBonus').textContent = adminSettings.referredBonus.toFixed(2);
+
+                // Payment methods
+                const paymentMethodSelect = document.getElementById('paymentMethod');
+                paymentMethodSelect.innerHTML = '<option value="">Select Method</option>';
+                adminSettings.paymentMethods.forEach(method => {
+                    const option = document.createElement('option');
+                    option.value = method;
+                    option.textContent = method;
+                    paymentMethodSelect.appendChild(option);
                 });
+            }
 
-                await loadUserData();
-                updateUI();
+            // Daily tasks progress
+            updateTaskProgress();
 
-                showNotification(`You earned $${reward.toFixed(2)}!`, 'success');
-            }, 2000);
+            // One-time tasks
+            updateOneTimeTasks();
+
+            // Spin count
+            document.getElementById('todaySpins').textContent = currentUserData.dailyTasks.spin.count;
+
+            // Profile page
+            document.getElementById('profileName').textContent = currentUserData.firstName + ' ' + currentUserData.lastName;
+            document.getElementById('profileUsername').textContent = currentUserData.username ? `@${currentUserData.username}` : 'No username';
+            document.getElementById('profileId').textContent = `ID: ${currentUserData.telegramId}`;
+            document.getElementById('profileBalance').textContent = currentUserData.balance.toFixed(2);
+            document.getElementById('profileTaskEarnings').textContent = `$${currentUserData.taskEarnings.toFixed(2)}`;
+            document.getElementById('profileGameEarnings').textContent = `$${currentUserData.gameEarnings.toFixed(2)}`;
+            document.getElementById('profileReferralCount').textContent = currentUserData.totalReferrals;
+
+            // Referral page
+            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${currentUserData.telegramId}`;
+            document.getElementById('referralLink').textContent = referralLink;
+            document.getElementById('totalReferrals').textContent = currentUserData.totalReferrals;
+            document.getElementById('referralEarnings').textContent = currentUserData.referralEarnings.toFixed(2);
+
+            // Load referral list
+            loadReferralList();
+
+            // Load withdrawal history
+            loadWithdrawalHistory();
+
+            // Load top withdrawers
+            loadTopWithdrawers();
+
+            // Draw spin wheel
+            drawSpinWheel();
+
+            // Draw earnings chart
+            drawEarningsChart();
+
+            console.log('[v0] UI update complete');
         }
 
-        async function visitDirectLink() {
-            const count = userData.dailyTasks.directLink.count;
+        // Function to display welcome message based on referral status
+        function showWelcomeMessage() {
+            if (!currentUserData) return;
 
-            if (count >= 3) {
-                showNotification('Daily limit reached!', 'warning');
-                return;
-            }
-
-            if (!adminSettings.directLinks || adminSettings.directLinks.length === 0) {
-                showNotification('No direct links available', 'error');
-                return;
-            }
-
-            const randomTime = Math.floor(Math.random() * (50 - 20 + 1)) + 20;
-            const link = adminSettings.directLinks[count];
-            const reward = adminSettings.directLinkReward;
-
-            if (!confirm(`Watch ad for ${randomTime} seconds and earn $${reward.toFixed(2)}?`)) {
-                return;
-            }
-
-            const startTime = Date.now();
-            window.open(link.url, '_blank');
-
-            // Check if user stayed for required time
-            const checkInterval = setInterval(async () => {
-                const elapsed = (Date.now() - startTime) / 1000;
-                
-                if (elapsed >= randomTime) {
-                    clearInterval(checkInterval);
-                    
-                    await db.collection('users').doc(userData.telegramId).update({
-                        balance: firebase.firestore.FieldValue.increment(reward),
-                        taskEarnings: firebase.firestore.FieldValue.increment(reward),
-                        'dailyTasks.directLink.count': firebase.firestore.FieldValue.increment(1)
-                    });
-
-                    await loadUserData();
-                    updateUI();
-
-                    showNotification(`You earned $${reward.toFixed(2)}!`, 'success');
-                }
-            }, 1000);
-        }
-
-        async function watchYoutubeVideo() {
-            const count = userData.dailyTasks.youtube.count;
-
-            if (count >= 3) {
-                showNotification('Daily limit reached!', 'warning');
-                return;
-            }
-
-            if (!adminSettings.youtubeVideos || adminSettings.youtubeVideos.length === 0) {
-                showNotification('No videos available', 'error');
-                return;
-            }
-
-            const video = adminSettings.youtubeVideos[count];
-            window.open(video.url, '_blank');
-
-            const code = prompt('Enter the code from the video:');
+            let message = 'Welcome to Cat Fire! Complete tasks and earn money.';
             
-            if (code === video.code) {
-                const reward = adminSettings.youtubeReward;
-                
-                await db.collection('users').doc(userData.telegramId).update({
-                    balance: firebase.firestore.FieldValue.increment(reward),
-                    taskEarnings: firebase.firestore.FieldValue.increment(reward),
-                    'dailyTasks.youtube.count': firebase.firestore.FieldValue.increment(1)
-                });
-
-                await loadUserData();
-                updateUI();
-
-                showNotification(`You earned $${reward.toFixed(2)}!`, 'success');
-            } else {
-                showNotification('Incorrect code!', 'error');
+            if (currentUserData.referrerId && currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referredBonus?.toFixed(2) || 2.00} as referral bonus!`;
+            } else if (currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referralBonus?.toFixed(2) || 1.00} as signup bonus!`;
             }
+
+            document.getElementById('welcomeMessage').textContent = message;
+            document.getElementById('welcomeModal').classList.add('active');
         }
 
-        async function claimLoginBonus() {
-            if (userData.dailyTasks.loginBonus.claimed) {
-                showNotification('Already claimed today!', 'warning');
-                return;
-            }
+        function closeWelcomeModal() {
+            document.getElementById('welcomeModal').classList.remove('active');
+        }
 
-            const reward = adminSettings.loginBonusReward;
-            
-            await db.collection('users').doc(userData.telegramId).update({
-                balance: firebase.firestore.FieldValue.increment(reward),
-                taskEarnings: firebase.firestore.FieldValue.increment(reward),
-                'dailyTasks.loginBonus.claimed': true,
-                'dailyTasks.loginBonus.lastClaim': new Date().toISOString()
+        // Modified to show active page and update navigation
+        function showPage(pageId) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
             });
 
-            await loadUserData();
-            updateUI();
+            // Show selected page
+            document.getElementById(pageId).classList.add('active');
+            currentPage = pageId.replace('Page', '').toLowerCase(); // Update current page tracker
 
-            showNotification(`You earned $${reward.toFixed(2)}!`, 'success');
-        }
-
-        async function joinTelegramChannel() {
-            if (userData.oneTimeTasks.telegram) {
-                showNotification('Already completed!', 'warning');
-                return;
-            }
-
-            if (!adminSettings.telegramChannel) {
-                showNotification('Channel not configured', 'error');
-                return;
-            }
-
-            window.open(adminSettings.telegramChannel, '_blank');
-
-            // Show verifying message
-            const btn = document.getElementById('telegramBtn');
-            btn.textContent = 'Verifying...';
-            btn.disabled = true;
-
-            setTimeout(async () => {
-                const reward = adminSettings.telegramBonusReward;
-                
-                await db.collection('users').doc(userData.telegramId).update({
-                    balance: firebase.firestore.FieldValue.increment(reward),
-                    taskEarnings: firebase.firestore.FieldValue.increment(reward),
-                    'oneTimeTasks.telegram': true
-                });
-
-                await loadUserData();
-                updateUI();
-
-                showNotification(`You earned $${reward.toFixed(2)}!`, 'success');
-            }, 5000);
-        }
-
-        async function subscribeYoutubeChannel() {
-            if (userData.oneTimeTasks.youtubeSub) {
-                showNotification('Already completed!', 'warning');
-                return;
-            }
-
-            if (!adminSettings.youtubeChannel) {
-                showNotification('Channel not configured', 'error');
-                return;
-            }
-
-            window.open(adminSettings.youtubeChannel, '_blank');
-
-            // Show verifying message
-            const btn = document.getElementById('youtubeSubBtn');
-            btn.textContent = 'Verifying...';
-            btn.disabled = true;
-
-            setTimeout(async () => {
-                const reward = adminSettings.youtubeSubBonusReward;
-                
-                await db.collection('users').doc(userData.telegramId).update({
-                    balance: firebase.firestore.FieldValue.increment(reward),
-                    taskEarnings: firebase.firestore.FieldValue.increment(reward),
-                    'oneTimeTasks.youtubeSub': true
-                });
-
-                await loadUserData();
-                updateUI();
-
-                showNotification(`You earned $${reward.toFixed(2)}!`, 'success');
-            }, 5000);
-        }
-
-        // Withdrawal Functions
-        async function submitWithdrawal() {
-            const amount = parseFloat(document.getElementById('withdrawAmount').value);
-            const method = document.getElementById('paymentMethod').value;
-            const mobile = document.getElementById('mobileNumber').value;
-            const account = document.getElementById('paymentAccount').value;
-
-            if (!amount || !method || !mobile || !account) {
-                showNotification('Please fill all fields', 'error');
-                return;
-            }
-
-            if (amount < adminSettings.minWithdraw) {
-                showNotification(`Minimum withdrawal is $${adminSettings.minWithdraw}`, 'error');
-                return;
-            }
-
-            if (amount > userData.balance) {
-                showNotification('Insufficient balance!', 'error');
-                return;
-            }
-
-            const withdrawal = {
-                amount: amount,
-                method: method,
-                mobile: mobile,
-                account: account,
-                status: 'pending',
-                requestDate: new Date().toISOString(),
-                approvedDate: null
-            };
-
-            await db.collection('users').doc(userData.telegramId).update({
-                balance: firebase.firestore.FieldValue.increment(-amount),
-                withdrawals: firebase.firestore.FieldValue.arrayUnion(withdrawal)
+            // Update navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
             });
 
-            // Add to pending withdrawals collection for admin
-            await db.collection('withdrawals').add({
-                userId: userData.telegramId,
-                userName: userData.firstName,
-                ...withdrawal
-            });
-
-            await loadUserData();
-            updateUI();
-
-            // Clear form
-            document.getElementById('withdrawAmount').value = '';
-            document.getElementById('paymentMethod').value = '';
-            document.getElementById('mobileNumber').value = '';
-            document.getElementById('paymentAccount').value = '';
-
-            showNotification('Withdrawal request submitted!', 'success');
+            const navItems = document.querySelectorAll('.nav-item');
+            if (pageId === 'homePage') navItems[0].classList.add('active');
+            if (pageId === 'withdrawPage') navItems[1].classList.add('active');
+            if (pageId === 'referPage') navItems[2].classList.add('active');
+            if (pageId === 'profilePage') navItems[3].classList.add('active');
         }
 
-        function loadWithdrawalHistory() {
-            const container = document.getElementById('withdrawHistoryContainer');
-            
-            if (!userData.withdrawals || userData.withdrawals.length === 0) {
-                container.innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 20px;">No withdrawal history</p>';
-                return;
-            }
-
-            container.innerHTML = '';
-            userData.withdrawals.reverse().forEach(withdrawal => {
-                const item = document.createElement('div');
-                item.className = 'history-item';
-                
-                const statusClass = withdrawal.status === 'pending' ? 'status-pending' : 
-                                  withdrawal.status === 'approved' ? 'status-approved' : 'status-rejected';
-                
-                item.innerHTML = `
-                    <div class="history-header">
-                        <div class="history-amount">$${withdrawal.amount.toFixed(2)}</div>
-                        <div class="history-status ${statusClass}">${withdrawal.status.toUpperCase()}</div>
-                    </div>
-                    <div class="history-details">
-                        <div>${withdrawal.method} - ${withdrawal.account}</div>
-                        <div>${new Date(withdrawal.requestDate).toLocaleDateString()}</div>
-                    </div>
-                `;
-                
-                container.appendChild(item);
-            });
-        }
-
-        async function loadTopWithdrawers() {
+        // Added checkVPN function
+        async function checkVPN() {
             try {
-                const topDoc = await db.collection('settings').doc('topWithdrawers').get();
-                const container = document.getElementById('topWithdrawersContainer');
+                console.log('[v0] Checking for VPN...');
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
                 
-                if (!topDoc.exists || !topDoc.data().list) {
-                    container.innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 20px;">No data available</p>';
-                    return;
+                console.log('[v0] IP Info:', data);
+                
+                // Basic VPN/Proxy detection based on ASN or organization name
+                if (data.org && (
+                    data.org.toLowerCase().includes('vpn') ||
+                    data.org.toLowerCase().includes('proxy') ||
+                    data.org.toLowerCase().includes('hosting') ||
+                    data.org.toLowerCase().includes('datacenter') ||
+                    data.asn && data.asn.toLowerCase().includes('vpn')
+                )) {
+                    console.log('[v0] VPN/Proxy detected');
+                    return true;
                 }
-
-                const topList = topDoc.data().list;
-                container.innerHTML = '';
-                
-                topList.forEach((item, index) => {
-                    const withdrawer = document.createElement('div');
-                    withdrawer.className = 'withdrawer-item';
-                    withdrawer.innerHTML = `
-                        <div class="withdrawer-rank">${index + 1}</div>
-                        <div class="withdrawer-name">${item.name}</div>
-                        <div class="withdrawer-amount">$${item.amount.toFixed(2)}</div>
-                    `;
-                    container.appendChild(withdrawer);
-                });
+                console.log('[v0] No VPN detected');
+                return false;
             } catch (error) {
-                console.error('[v0] Error loading top withdrawers:', error);
+                console.log('[v0] VPN detection error:', error);
+                return false; // Assume no VPN if detection fails
             }
         }
 
-        // Referral Functions
-        function copyReferralLink() {
-            const link = document.getElementById('referralLink').textContent;
-            navigator.clipboard.writeText(link);
-            showNotification('Link copied!', 'success');
+        // Initialize app when page loads
+        window.addEventListener('load', initApp);
+    </script>
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA7vbuDVd49qNePXsNCJrsMVmj-LCSH3R8",
+            authDomain: "cat-fire-bot.firebaseapp.com",
+            databaseURL: "https://cat-fire-bot-default-rtdb.firebaseio.com",
+            projectId: "cat-fire-bot",
+            storageBucket: "cat-fire-bot.firebasestorage.app",
+            messagingSenderId: "320717959791",
+            appId: "1:320717959791:web:8a6d191972cf263a7d939a"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const rtdb = firebase.database();
+
+        // Global variables
+        let currentUser = null;
+        let currentUserData = null; // Renamed from userData to currentUserData
+        let adminSettings = null;
+        let currentPage = 'home'; // Added to track current page
+        let selectedBet = 'medium'; // Moved from original location
+        let isSpinning = false; // Moved from original location
+
+        // Telegram WebApp
+        const tg = window.Telegram.WebApp;
+
+        // Helper Functions
+        function showLoading() {
+            document.getElementById('loadingScreen').classList.remove('hidden');
         }
 
-        function shareReferralLink() {
-            const link = document.getElementById('referralLink').textContent;
-            const text = `Join Cat Fire and earn money! Use my referral link: ${link}`;
-            
-            if (tg.openTelegramLink) {
-                tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`);
-            } else {
-                window.open(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`, '_blank');
-            }
+        function hideLoading() {
+            document.getElementById('loadingScreen').classList.add('hidden');
         }
 
-        function loadReferralList() {
-            const container = document.getElementById('referralListContainer');
-            
-            if (!userData.referrals || userData.referrals.length === 0) {
-                container.innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 20px;">No referrals yet</p>';
+        function showVPNWarning() {
+            document.getElementById('vpnWarning').classList.add('active');
+            hideLoading();
+        }
+
+        function showError(message) {
+            showNotification(message, 'error');
+            hideLoading();
+        }
+
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+
+        function isToday(date) {
+            const today = new Date();
+            return date.getDate() === today.getDate() &&
+                   date.getMonth() === today.getMonth() &&
+                   date.getFullYear() === today.getFullYear();
+        }
+
+        // Encapsulate UI update logic
+        function updateUI() {
+            if (!currentUserData) {
+                console.error('[v0] Cannot update UI: currentUserData is null');
                 return;
             }
 
-            container.innerHTML = '';
-            userData.referrals.reverse().forEach(referral => {
-                const item = document.createElement('div');
-                item.className = 'referral-item';
-                item.innerHTML = `
-                    <div>
-                        <div class="referral-user">${referral.name}</div>
-                        <div class="referral-date">${new Date(referral.date).toLocaleDateString()}</div>
-                    </div>
-                    <div class="referral-earned">+$${referral.earned.toFixed(2)}</div>
-                `;
-                container.appendChild(item);
-            });
+            console.log('[v0] Updating UI with user data');
+
+            // Header
+            document.getElementById('userName').textContent = currentUserData.firstName;
+            document.getElementById('userId').textContent = `ID: ${currentUserData.telegramId}`;
+
+            // Balance
+            document.getElementById('userBalance').textContent = currentUserData.balance.toFixed(2);
+
+            // Task rewards and limits
+            if (adminSettings) {
+                document.getElementById('monetagReward').textContent = adminSettings.monetagReward.toFixed(2);
+                document.getElementById('monetagLimit').textContent = adminSettings.monetagLimit;
+                document.getElementById('directLinkReward').textContent = adminSettings.directLinkReward.toFixed(2);
+                document.getElementById('youtubeReward').textContent = adminSettings.youtubeReward.toFixed(2);
+                document.getElementById('loginBonusReward').textContent = adminSettings.loginBonusReward.toFixed(2);
+                document.getElementById('telegramBonusReward').textContent = adminSettings.telegramBonusReward.toFixed(2);
+                document.getElementById('youtubeSubBonusReward').textContent = adminSettings.youtubeSubBonusReward.toFixed(2);
+                document.getElementById('minWithdraw').textContent = adminSettings.minWithdraw.toFixed(2);
+                document.getElementById('referralBonus').textContent = adminSettings.referralBonus.toFixed(2);
+                document.getElementById('referredBonus').textContent = adminSettings.referredBonus.toFixed(2);
+
+                // Payment methods
+                const paymentMethodSelect = document.getElementById('paymentMethod');
+                paymentMethodSelect.innerHTML = '<option value="">Select Method</option>';
+                adminSettings.paymentMethods.forEach(method => {
+                    const option = document.createElement('option');
+                    option.value = method;
+                    option.textContent = method;
+                    paymentMethodSelect.appendChild(option);
+                });
+            }
+
+            // Daily tasks progress
+            updateTaskProgress();
+
+            // One-time tasks
+            updateOneTimeTasks();
+
+            // Spin count
+            document.getElementById('todaySpins').textContent = currentUserData.dailyTasks.spin.count;
+
+            // Profile page
+            document.getElementById('profileName').textContent = currentUserData.firstName + ' ' + currentUserData.lastName;
+            document.getElementById('profileUsername').textContent = currentUserData.username ? `@${currentUserData.username}` : 'No username';
+            document.getElementById('profileId').textContent = `ID: ${currentUserData.telegramId}`;
+            document.getElementById('profileBalance').textContent = currentUserData.balance.toFixed(2);
+            document.getElementById('profileTaskEarnings').textContent = `$${currentUserData.taskEarnings.toFixed(2)}`;
+            document.getElementById('profileGameEarnings').textContent = `$${currentUserData.gameEarnings.toFixed(2)}`;
+            document.getElementById('profileReferralCount').textContent = currentUserData.totalReferrals;
+
+            // Referral page
+            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${currentUserData.telegramId}`;
+            document.getElementById('referralLink').textContent = referralLink;
+            document.getElementById('totalReferrals').textContent = currentUserData.totalReferrals;
+            document.getElementById('referralEarnings').textContent = currentUserData.referralEarnings.toFixed(2);
+
+            // Load referral list
+            loadReferralList();
+
+            // Load withdrawal history
+            loadWithdrawalHistory();
+
+            // Load top withdrawers
+            loadTopWithdrawers();
+
+            // Draw spin wheel
+            drawSpinWheel();
+
+            // Draw earnings chart
+            drawEarningsChart();
+
+            console.log('[v0] UI update complete');
         }
 
-        // Chart Functions
-        function drawEarningsChart() {
-            const ctx = document.getElementById('earningsChart');
+        // Function to display welcome message based on referral status
+        function showWelcomeMessage() {
+            if (!currentUserData) return;
+
+            let message = 'Welcome to Cat Fire! Complete tasks and earn money.';
             
-            new Chart(ctx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Task Earnings', 'Game Earnings', 'Referral Earnings'],
-                    datasets: [{
-                        data: [
-                            userData.taskEarnings,
-                            userData.gameEarnings,
-                            userData.referralEarnings
-                        ],
-                        backgroundColor: [
-                            '#2196F3',
-                            '#03A9F4',
-                            '#00BCD4'
-                        ]
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'bottom'
-                        }
-                    }
-                }
+            if (currentUserData.referrerId && currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referredBonus?.toFixed(2) || 2.00} as referral bonus!`;
+            } else if (currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referralBonus?.toFixed(2) || 1.00} as signup bonus!`;
+            }
+
+            document.getElementById('welcomeMessage').textContent = message;
+            document.getElementById('welcomeModal').classList.add('active');
+        }
+
+        function closeWelcomeModal() {
+            document.getElementById('welcomeModal').classList.remove('active');
+        }
+
+        // Modified to show active page and update navigation
+        function showPage(pageId) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
             });
+
+            // Show selected page
+            document.getElementById(pageId).classList.add('active');
+            currentPage = pageId.replace('Page', '').toLowerCase(); // Update current page tracker
+
+            // Update navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            const navItems = document.querySelectorAll('.nav-item');
+            if (pageId === 'homePage') navItems[0].classList.add('active');
+            if (pageId === 'withdrawPage') navItems[1].classList.add('active');
+            if (pageId === 'referPage') navItems[2].classList.add('active');
+            if (pageId === 'profilePage') navItems[3].classList.add('active');
+        }
+
+        // Added checkVPN function
+        async function checkVPN() {
+            try {
+                console.log('[v0] Checking for VPN...');
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
+                
+                console.log('[v0] IP Info:', data);
+                
+                // Basic VPN/Proxy detection based on ASN or organization name
+                if (data.org && (
+                    data.org.toLowerCase().includes('vpn') ||
+                    data.org.toLowerCase().includes('proxy') ||
+                    data.org.toLowerCase().includes('hosting') ||
+                    data.org.toLowerCase().includes('datacenter') ||
+                    data.asn && data.asn.toLowerCase().includes('vpn')
+                )) {
+                    console.log('[v0] VPN/Proxy detected');
+                    return true;
+                }
+                console.log('[v0] No VPN detected');
+                return false;
+            } catch (error) {
+                console.log('[v0] VPN detection error:', error);
+                return false; // Assume no VPN if detection fails
+            }
+        }
+
+        // Initialize app when page loads
+        window.addEventListener('load', initApp);
+    </script>
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA7vbuDVd49qNePXsNCJrsMVmj-LCSH3R8",
+            authDomain: "cat-fire-bot.firebaseapp.com",
+            databaseURL: "https://cat-fire-bot-default-rtdb.firebaseio.com",
+            projectId: "cat-fire-bot",
+            storageBucket: "cat-fire-bot.firebasestorage.app",
+            messagingSenderId: "320717959791",
+            appId: "1:320717959791:web:8a6d191972cf263a7d939a"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const rtdb = firebase.database();
+
+        // Global variables
+        let currentUser = null;
+        let currentUserData = null; // Renamed from userData to currentUserData
+        let adminSettings = null;
+        let currentPage = 'home'; // Added to track current page
+        let selectedBet = 'medium'; // Moved from original location
+        let isSpinning = false; // Moved from original location
+
+        // Telegram WebApp
+        const tg = window.Telegram.WebApp;
+
+        // Helper Functions
+        function showLoading() {
+            document.getElementById('loadingScreen').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingScreen').classList.add('hidden');
+        }
+
+        function showVPNWarning() {
+            document.getElementById('vpnWarning').classList.add('active');
+            hideLoading();
+        }
+
+        function showError(message) {
+            showNotification(message, 'error');
+            hideLoading();
+        }
+
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+
+        function isToday(date) {
+            const today = new Date();
+            return date.getDate() === today.getDate() &&
+                   date.getMonth() === today.getMonth() &&
+                   date.getFullYear() === today.getFullYear();
+        }
+
+        // Encapsulate UI update logic
+        function updateUI() {
+            if (!currentUserData) {
+                console.error('[v0] Cannot update UI: currentUserData is null');
+                return;
+            }
+
+            console.log('[v0] Updating UI with user data');
+
+            // Header
+            document.getElementById('userName').textContent = currentUserData.firstName;
+            document.getElementById('userId').textContent = `ID: ${currentUserData.telegramId}`;
+
+            // Balance
+            document.getElementById('userBalance').textContent = currentUserData.balance.toFixed(2);
+
+            // Task rewards and limits
+            if (adminSettings) {
+                document.getElementById('monetagReward').textContent = adminSettings.monetagReward.toFixed(2);
+                document.getElementById('monetagLimit').textContent = adminSettings.monetagLimit;
+                document.getElementById('directLinkReward').textContent = adminSettings.directLinkReward.toFixed(2);
+                document.getElementById('youtubeReward').textContent = adminSettings.youtubeReward.toFixed(2);
+                document.getElementById('loginBonusReward').textContent = adminSettings.loginBonusReward.toFixed(2);
+                document.getElementById('telegramBonusReward').textContent = adminSettings.telegramBonusReward.toFixed(2);
+                document.getElementById('youtubeSubBonusReward').textContent = adminSettings.youtubeSubBonusReward.toFixed(2);
+                document.getElementById('minWithdraw').textContent = adminSettings.minWithdraw.toFixed(2);
+                document.getElementById('referralBonus').textContent = adminSettings.referralBonus.toFixed(2);
+                document.getElementById('referredBonus').textContent = adminSettings.referredBonus.toFixed(2);
+
+                // Payment methods
+                const paymentMethodSelect = document.getElementById('paymentMethod');
+                paymentMethodSelect.innerHTML = '<option value="">Select Method</option>';
+                adminSettings.paymentMethods.forEach(method => {
+                    const option = document.createElement('option');
+                    option.value = method;
+                    option.textContent = method;
+                    paymentMethodSelect.appendChild(option);
+                });
+            }
+
+            // Daily tasks progress
+            updateTaskProgress();
+
+            // One-time tasks
+            updateOneTimeTasks();
+
+            // Spin count
+            document.getElementById('todaySpins').textContent = currentUserData.dailyTasks.spin.count;
+
+            // Profile page
+            document.getElementById('profileName').textContent = currentUserData.firstName + ' ' + currentUserData.lastName;
+            document.getElementById('profileUsername').textContent = currentUserData.username ? `@${currentUserData.username}` : 'No username';
+            document.getElementById('profileId').textContent = `ID: ${currentUserData.telegramId}`;
+            document.getElementById('profileBalance').textContent = currentUserData.balance.toFixed(2);
+            document.getElementById('profileTaskEarnings').textContent = `$${currentUserData.taskEarnings.toFixed(2)}`;
+            document.getElementById('profileGameEarnings').textContent = `$${currentUserData.gameEarnings.toFixed(2)}`;
+            document.getElementById('profileReferralCount').textContent = currentUserData.totalReferrals;
+
+            // Referral page
+            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${currentUserData.telegramId}`;
+            document.getElementById('referralLink').textContent = referralLink;
+            document.getElementById('totalReferrals').textContent = currentUserData.totalReferrals;
+            document.getElementById('referralEarnings').textContent = currentUserData.referralEarnings.toFixed(2);
+
+            // Load referral list
+            loadReferralList();
+
+            // Load withdrawal history
+            loadWithdrawalHistory();
+
+            // Load top withdrawers
+            loadTopWithdrawers();
+
+            // Draw spin wheel
+            drawSpinWheel();
+
+            // Draw earnings chart
+            drawEarningsChart();
+
+            console.log('[v0] UI update complete');
+        }
+
+        // Function to display welcome message based on referral status
+        function showWelcomeMessage() {
+            if (!currentUserData) return;
+
+            let message = 'Welcome to Cat Fire! Complete tasks and earn money.';
+            
+            if (currentUserData.referrerId && currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referredBonus?.toFixed(2) || 2.00} as referral bonus!`;
+            } else if (currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referralBonus?.toFixed(2) || 1.00} as signup bonus!`;
+            }
+
+            document.getElementById('welcomeMessage').textContent = message;
+            document.getElementById('welcomeModal').classList.add('active');
+        }
+
+        function closeWelcomeModal() {
+            document.getElementById('welcomeModal').classList.remove('active');
+        }
+
+        // Modified to show active page and update navigation
+        function showPage(pageId) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+
+            // Show selected page
+            document.getElementById(pageId).classList.add('active');
+            currentPage = pageId.replace('Page', '').toLowerCase(); // Update current page tracker
+
+            // Update navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            const navItems = document.querySelectorAll('.nav-item');
+            if (pageId === 'homePage') navItems[0].classList.add('active');
+            if (pageId === 'withdrawPage') navItems[1].classList.add('active');
+            if (pageId === 'referPage') navItems[2].classList.add('active');
+            if (pageId === 'profilePage') navItems[3].classList.add('active');
+        }
+
+        // Added checkVPN function
+        async function checkVPN() {
+            try {
+                console.log('[v0] Checking for VPN...');
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
+                
+                console.log('[v0] IP Info:', data);
+                
+                // Basic VPN/Proxy detection based on ASN or organization name
+                if (data.org && (
+                    data.org.toLowerCase().includes('vpn') ||
+                    data.org.toLowerCase().includes('proxy') ||
+                    data.org.toLowerCase().includes('hosting') ||
+                    data.org.toLowerCase().includes('datacenter') ||
+                    data.asn && data.asn.toLowerCase().includes('vpn')
+                )) {
+                    console.log('[v0] VPN/Proxy detected');
+                    return true;
+                }
+                console.log('[v0] No VPN detected');
+                return false;
+            } catch (error) {
+                console.log('[v0] VPN detection error:', error);
+                return false; // Assume no VPN if detection fails
+            }
+        }
+
+        // Initialize app when page loads
+        window.addEventListener('load', initApp);
+    </script>
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA7vbuDVd49qNePXsNCJrsMVmj-LCSH3R8",
+            authDomain: "cat-fire-bot.firebaseapp.com",
+            databaseURL: "https://cat-fire-bot-default-rtdb.firebaseio.com",
+            projectId: "cat-fire-bot",
+            storageBucket: "cat-fire-bot.firebasestorage.app",
+            messagingSenderId: "320717959791",
+            appId: "1:320717959791:web:8a6d191972cf263a7d939a"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const rtdb = firebase.database();
+
+        // Global variables
+        let currentUser = null;
+        let currentUserData = null; // Renamed from userData to currentUserData
+        let adminSettings = null;
+        let currentPage = 'home'; // Added to track current page
+        let selectedBet = 'medium'; // Moved from original location
+        let isSpinning = false; // Moved from original location
+
+        // Telegram WebApp
+        const tg = window.Telegram.WebApp;
+
+        // Helper Functions
+        function showLoading() {
+            document.getElementById('loadingScreen').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingScreen').classList.add('hidden');
+        }
+
+        function showVPNWarning() {
+            document.getElementById('vpnWarning').classList.add('active');
+            hideLoading();
+        }
+
+        function showError(message) {
+            showNotification(message, 'error');
+            hideLoading();
+        }
+
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+
+        function isToday(date) {
+            const today = new Date();
+            return date.getDate() === today.getDate() &&
+                   date.getMonth() === today.getMonth() &&
+                   date.getFullYear() === today.getFullYear();
+        }
+
+        // Encapsulate UI update logic
+        function updateUI() {
+            if (!currentUserData) {
+                console.error('[v0] Cannot update UI: currentUserData is null');
+                return;
+            }
+
+            console.log('[v0] Updating UI with user data');
+
+            // Header
+            document.getElementById('userName').textContent = currentUserData.firstName;
+            document.getElementById('userId').textContent = `ID: ${currentUserData.telegramId}`;
+
+            // Balance
+            document.getElementById('userBalance').textContent = currentUserData.balance.toFixed(2);
+
+            // Task rewards and limits
+            if (adminSettings) {
+                document.getElementById('monetagReward').textContent = adminSettings.monetagReward.toFixed(2);
+                document.getElementById('monetagLimit').textContent = adminSettings.monetagLimit;
+                document.getElementById('directLinkReward').textContent = adminSettings.directLinkReward.toFixed(2);
+                document.getElementById('youtubeReward').textContent = adminSettings.youtubeReward.toFixed(2);
+                document.getElementById('loginBonusReward').textContent = adminSettings.loginBonusReward.toFixed(2);
+                document.getElementById('telegramBonusReward').textContent = adminSettings.telegramBonusReward.toFixed(2);
+                document.getElementById('youtubeSubBonusReward').textContent = adminSettings.youtubeSubBonusReward.toFixed(2);
+                document.getElementById('minWithdraw').textContent = adminSettings.minWithdraw.toFixed(2);
+                document.getElementById('referralBonus').textContent = adminSettings.referralBonus.toFixed(2);
+                document.getElementById('referredBonus').textContent = adminSettings.referredBonus.toFixed(2);
+
+                // Payment methods
+                const paymentMethodSelect = document.getElementById('paymentMethod');
+                paymentMethodSelect.innerHTML = '<option value="">Select Method</option>';
+                adminSettings.paymentMethods.forEach(method => {
+                    const option = document.createElement('option');
+                    option.value = method;
+                    option.textContent = method;
+                    paymentMethodSelect.appendChild(option);
+                });
+            }
+
+            // Daily tasks progress
+            updateTaskProgress();
+
+            // One-time tasks
+            updateOneTimeTasks();
+
+            // Spin count
+            document.getElementById('todaySpins').textContent = currentUserData.dailyTasks.spin.count;
+
+            // Profile page
+            document.getElementById('profileName').textContent = currentUserData.firstName + ' ' + currentUserData.lastName;
+            document.getElementById('profileUsername').textContent = currentUserData.username ? `@${currentUserData.username}` : 'No username';
+            document.getElementById('profileId').textContent = `ID: ${currentUserData.telegramId}`;
+            document.getElementById('profileBalance').textContent = currentUserData.balance.toFixed(2);
+            document.getElementById('profileTaskEarnings').textContent = `$${currentUserData.taskEarnings.toFixed(2)}`;
+            document.getElementById('profileGameEarnings').textContent = `$${currentUserData.gameEarnings.toFixed(2)}`;
+            document.getElementById('profileReferralCount').textContent = currentUserData.totalReferrals;
+
+            // Referral page
+            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${currentUserData.telegramId}`;
+            document.getElementById('referralLink').textContent = referralLink;
+            document.getElementById('totalReferrals').textContent = currentUserData.totalReferrals;
+            document.getElementById('referralEarnings').textContent = currentUserData.referralEarnings.toFixed(2);
+
+            // Load referral list
+            loadReferralList();
+
+            // Load withdrawal history
+            loadWithdrawalHistory();
+
+            // Load top withdrawers
+            loadTopWithdrawers();
+
+            // Draw spin wheel
+            drawSpinWheel();
+
+            // Draw earnings chart
+            drawEarningsChart();
+
+            console.log('[v0] UI update complete');
+        }
+
+        // Function to display welcome message based on referral status
+        function showWelcomeMessage() {
+            if (!currentUserData) return;
+
+            let message = 'Welcome to Cat Fire! Complete tasks and earn money.';
+            
+            if (currentUserData.referrerId && currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referredBonus?.toFixed(2) || 2.00} as referral bonus!`;
+            } else if (currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referralBonus?.toFixed(2) || 1.00} as signup bonus!`;
+            }
+
+            document.getElementById('welcomeMessage').textContent = message;
+            document.getElementById('welcomeModal').classList.add('active');
+        }
+
+        function closeWelcomeModal() {
+            document.getElementById('welcomeModal').classList.remove('active');
+        }
+
+        // Modified to show active page and update navigation
+        function showPage(pageId) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+
+            // Show selected page
+            document.getElementById(pageId).classList.add('active');
+            currentPage = pageId.replace('Page', '').toLowerCase(); // Update current page tracker
+
+            // Update navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            const navItems = document.querySelectorAll('.nav-item');
+            if (pageId === 'homePage') navItems[0].classList.add('active');
+            if (pageId === 'withdrawPage') navItems[1].classList.add('active');
+            if (pageId === 'referPage') navItems[2].classList.add('active');
+            if (pageId === 'profilePage') navItems[3].classList.add('active');
+        }
+
+        // Added checkVPN function
+        async function checkVPN() {
+            try {
+                console.log('[v0] Checking for VPN...');
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
+                
+                console.log('[v0] IP Info:', data);
+                
+                // Basic VPN/Proxy detection based on ASN or organization name
+                if (data.org && (
+                    data.org.toLowerCase().includes('vpn') ||
+                    data.org.toLowerCase().includes('proxy') ||
+                    data.org.toLowerCase().includes('hosting') ||
+                    data.org.toLowerCase().includes('datacenter') ||
+                    data.asn && data.asn.toLowerCase().includes('vpn')
+                )) {
+                    console.log('[v0] VPN/Proxy detected');
+                    return true;
+                }
+                console.log('[v0] No VPN detected');
+                return false;
+            } catch (error) {
+                console.log('[v0] VPN detection error:', error);
+                return false; // Assume no VPN if detection fails
+            }
+        }
+
+        // Initialize app when page loads
+        window.addEventListener('load', initApp);
+    </script>
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA7vbuDVd49qNePXsNCJrsMVmj-LCSH3R8",
+            authDomain: "cat-fire-bot.firebaseapp.com",
+            databaseURL: "https://cat-fire-bot-default-rtdb.firebaseio.com",
+            projectId: "cat-fire-bot",
+            storageBucket: "cat-fire-bot.firebasestorage.app",
+            messagingSenderId: "320717959791",
+            appId: "1:320717959791:web:8a6d191972cf263a7d939a"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const rtdb = firebase.database();
+
+        // Global variables
+        let currentUser = null;
+        let currentUserData = null; // Renamed from userData to currentUserData
+        let adminSettings = null;
+        let currentPage = 'home'; // Added to track current page
+        let selectedBet = 'medium'; // Moved from original location
+        let isSpinning = false; // Moved from original location
+
+        // Telegram WebApp
+        const tg = window.Telegram.WebApp;
+
+        // Helper Functions
+        function showLoading() {
+            document.getElementById('loadingScreen').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingScreen').classList.add('hidden');
+        }
+
+        function showVPNWarning() {
+            document.getElementById('vpnWarning').classList.add('active');
+            hideLoading();
+        }
+
+        function showError(message) {
+            showNotification(message, 'error');
+            hideLoading();
+        }
+
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+
+        function isToday(date) {
+            const today = new Date();
+            return date.getDate() === today.getDate() &&
+                   date.getMonth() === today.getMonth() &&
+                   date.getFullYear() === today.getFullYear();
+        }
+
+        // Encapsulate UI update logic
+        function updateUI() {
+            if (!currentUserData) {
+                console.error('[v0] Cannot update UI: currentUserData is null');
+                return;
+            }
+
+            console.log('[v0] Updating UI with user data');
+
+            // Header
+            document.getElementById('userName').textContent = currentUserData.firstName;
+            document.getElementById('userId').textContent = `ID: ${currentUserData.telegramId}`;
+
+            // Balance
+            document.getElementById('userBalance').textContent = currentUserData.balance.toFixed(2);
+
+            // Task rewards and limits
+            if (adminSettings) {
+                document.getElementById('monetagReward').textContent = adminSettings.monetagReward.toFixed(2);
+                document.getElementById('monetagLimit').textContent = adminSettings.monetagLimit;
+                document.getElementById('directLinkReward').textContent = adminSettings.directLinkReward.toFixed(2);
+                document.getElementById('youtubeReward').textContent = adminSettings.youtubeReward.toFixed(2);
+                document.getElementById('loginBonusReward').textContent = adminSettings.loginBonusReward.toFixed(2);
+                document.getElementById('telegramBonusReward').textContent = adminSettings.telegramBonusReward.toFixed(2);
+                document.getElementById('youtubeSubBonusReward').textContent = adminSettings.youtubeSubBonusReward.toFixed(2);
+                document.getElementById('minWithdraw').textContent = adminSettings.minWithdraw.toFixed(2);
+                document.getElementById('referralBonus').textContent = adminSettings.referralBonus.toFixed(2);
+                document.getElementById('referredBonus').textContent = adminSettings.referredBonus.toFixed(2);
+
+                // Payment methods
+                const paymentMethodSelect = document.getElementById('paymentMethod');
+                paymentMethodSelect.innerHTML = '<option value="">Select Method</option>';
+                adminSettings.paymentMethods.forEach(method => {
+                    const option = document.createElement('option');
+                    option.value = method;
+                    option.textContent = method;
+                    paymentMethodSelect.appendChild(option);
+                });
+            }
+
+            // Daily tasks progress
+            updateTaskProgress();
+
+            // One-time tasks
+            updateOneTimeTasks();
+
+            // Spin count
+            document.getElementById('todaySpins').textContent = currentUserData.dailyTasks.spin.count;
+
+            // Profile page
+            document.getElementById('profileName').textContent = currentUserData.firstName + ' ' + currentUserData.lastName;
+            document.getElementById('profileUsername').textContent = currentUserData.username ? `@${currentUserData.username}` : 'No username';
+            document.getElementById('profileId').textContent = `ID: ${currentUserData.telegramId}`;
+            document.getElementById('profileBalance').textContent = currentUserData.balance.toFixed(2);
+            document.getElementById('profileTaskEarnings').textContent = `$${currentUserData.taskEarnings.toFixed(2)}`;
+            document.getElementById('profileGameEarnings').textContent = `$${currentUserData.gameEarnings.toFixed(2)}`;
+            document.getElementById('profileReferralCount').textContent = currentUserData.totalReferrals;
+
+            // Referral page
+            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${currentUserData.telegramId}`;
+            document.getElementById('referralLink').textContent = referralLink;
+            document.getElementById('totalReferrals').textContent = currentUserData.totalReferrals;
+            document.getElementById('referralEarnings').textContent = currentUserData.referralEarnings.toFixed(2);
+
+            // Load referral list
+            loadReferralList();
+
+            // Load withdrawal history
+            loadWithdrawalHistory();
+
+            // Load top withdrawers
+            loadTopWithdrawers();
+
+            // Draw spin wheel
+            drawSpinWheel();
+
+            // Draw earnings chart
+            drawEarningsChart();
+
+            console.log('[v0] UI update complete');
+        }
+
+        // Function to display welcome message based on referral status
+        function showWelcomeMessage() {
+            if (!currentUserData) return;
+
+            let message = 'Welcome to Cat Fire! Complete tasks and earn money.';
+            
+            if (currentUserData.referrerId && currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referredBonus?.toFixed(2) || 2.00} as referral bonus!`;
+            } else if (currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referralBonus?.toFixed(2) || 1.00} as signup bonus!`;
+            }
+
+            document.getElementById('welcomeMessage').textContent = message;
+            document.getElementById('welcomeModal').classList.add('active');
+        }
+
+        function closeWelcomeModal() {
+            document.getElementById('welcomeModal').classList.remove('active');
+        }
+
+        // Modified to show active page and update navigation
+        function showPage(pageId) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+
+            // Show selected page
+            document.getElementById(pageId).classList.add('active');
+            currentPage = pageId.replace('Page', '').toLowerCase(); // Update current page tracker
+
+            // Update navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            const navItems = document.querySelectorAll('.nav-item');
+            if (pageId === 'homePage') navItems[0].classList.add('active');
+            if (pageId === 'withdrawPage') navItems[1].classList.add('active');
+            if (pageId === 'referPage') navItems[2].classList.add('active');
+            if (pageId === 'profilePage') navItems[3].classList.add('active');
+        }
+
+        // Added checkVPN function
+        async function checkVPN() {
+            try {
+                console.log('[v0] Checking for VPN...');
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
+                
+                console.log('[v0] IP Info:', data);
+                
+                // Basic VPN/Proxy detection based on ASN or organization name
+                if (data.org && (
+                    data.org.toLowerCase().includes('vpn') ||
+                    data.org.toLowerCase().includes('proxy') ||
+                    data.org.toLowerCase().includes('hosting') ||
+                    data.org.toLowerCase().includes('datacenter') ||
+                    data.asn && data.asn.toLowerCase().includes('vpn')
+                )) {
+                    console.log('[v0] VPN/Proxy detected');
+                    return true;
+                }
+                console.log('[v0] No VPN detected');
+                return false;
+            } catch (error) {
+                console.log('[v0] VPN detection error:', error);
+                return false; // Assume no VPN if detection fails
+            }
+        }
+
+        // Initialize app when page loads
+        window.addEventListener('load', initApp);
+    </script>
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA7vbuDVd49qNePXsNCJrsMVmj-LCSH3R8",
+            authDomain: "cat-fire-bot.firebaseapp.com",
+            databaseURL: "https://cat-fire-bot-default-rtdb.firebaseio.com",
+            projectId: "cat-fire-bot",
+            storageBucket: "cat-fire-bot.firebasestorage.app",
+            messagingSenderId: "320717959791",
+            appId: "1:320717959791:web:8a6d191972cf263a7d939a"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const rtdb = firebase.database();
+
+        // Global variables
+        let currentUser = null;
+        let currentUserData = null; // Renamed from userData to currentUserData
+        let adminSettings = null;
+        let currentPage = 'home'; // Added to track current page
+        let selectedBet = 'medium'; // Moved from original location
+        let isSpinning = false; // Moved from original location
+
+        // Telegram WebApp
+        const tg = window.Telegram.WebApp;
+
+        // Helper Functions
+        function showLoading() {
+            document.getElementById('loadingScreen').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingScreen').classList.add('hidden');
+        }
+
+        function showVPNWarning() {
+            document.getElementById('vpnWarning').classList.add('active');
+            hideLoading();
+        }
+
+        function showError(message) {
+            showNotification(message, 'error');
+            hideLoading();
+        }
+
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+
+        function isToday(date) {
+            const today = new Date();
+            return date.getDate() === today.getDate() &&
+                   date.getMonth() === today.getMonth() &&
+                   date.getFullYear() === today.getFullYear();
+        }
+
+        // Encapsulate UI update logic
+        function updateUI() {
+            if (!currentUserData) {
+                console.error('[v0] Cannot update UI: currentUserData is null');
+                return;
+            }
+
+            console.log('[v0] Updating UI with user data');
+
+            // Header
+            document.getElementById('userName').textContent = currentUserData.firstName;
+            document.getElementById('userId').textContent = `ID: ${currentUserData.telegramId}`;
+
+            // Balance
+            document.getElementById('userBalance').textContent = currentUserData.balance.toFixed(2);
+
+            // Task rewards and limits
+            if (adminSettings) {
+                document.getElementById('monetagReward').textContent = adminSettings.monetagReward.toFixed(2);
+                document.getElementById('monetagLimit').textContent = adminSettings.monetagLimit;
+                document.getElementById('directLinkReward').textContent = adminSettings.directLinkReward.toFixed(2);
+                document.getElementById('youtubeReward').textContent = adminSettings.youtubeReward.toFixed(2);
+                document.getElementById('loginBonusReward').textContent = adminSettings.loginBonusReward.toFixed(2);
+                document.getElementById('telegramBonusReward').textContent = adminSettings.telegramBonusReward.toFixed(2);
+                document.getElementById('youtubeSubBonusReward').textContent = adminSettings.youtubeSubBonusReward.toFixed(2);
+                document.getElementById('minWithdraw').textContent = adminSettings.minWithdraw.toFixed(2);
+                document.getElementById('referralBonus').textContent = adminSettings.referralBonus.toFixed(2);
+                document.getElementById('referredBonus').textContent = adminSettings.referredBonus.toFixed(2);
+
+                // Payment methods
+                const paymentMethodSelect = document.getElementById('paymentMethod');
+                paymentMethodSelect.innerHTML = '<option value="">Select Method</option>';
+                adminSettings.paymentMethods.forEach(method => {
+                    const option = document.createElement('option');
+                    option.value = method;
+                    option.textContent = method;
+                    paymentMethodSelect.appendChild(option);
+                });
+            }
+
+            // Daily tasks progress
+            updateTaskProgress();
+
+            // One-time tasks
+            updateOneTimeTasks();
+
+            // Spin count
+            document.getElementById('todaySpins').textContent = currentUserData.dailyTasks.spin.count;
+
+            // Profile page
+            document.getElementById('profileName').textContent = currentUserData.firstName + ' ' + currentUserData.lastName;
+            document.getElementById('profileUsername').textContent = currentUserData.username ? `@${currentUserData.username}` : 'No username';
+            document.getElementById('profileId').textContent = `ID: ${currentUserData.telegramId}`;
+            document.getElementById('profileBalance').textContent = currentUserData.balance.toFixed(2);
+            document.getElementById('profileTaskEarnings').textContent = `$${currentUserData.taskEarnings.toFixed(2)}`;
+            document.getElementById('profileGameEarnings').textContent = `$${currentUserData.gameEarnings.toFixed(2)}`;
+            document.getElementById('profileReferralCount').textContent = currentUserData.totalReferrals;
+
+            // Referral page
+            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${currentUserData.telegramId}`;
+            document.getElementById('referralLink').textContent = referralLink;
+            document.getElementById('totalReferrals').textContent = currentUserData.totalReferrals;
+            document.getElementById('referralEarnings').textContent = currentUserData.referralEarnings.toFixed(2);
+
+            // Load referral list
+            loadReferralList();
+
+            // Load withdrawal history
+            loadWithdrawalHistory();
+
+            // Load top withdrawers
+            loadTopWithdrawers();
+
+            // Draw spin wheel
+            drawSpinWheel();
+
+            // Draw earnings chart
+            drawEarningsChart();
+
+            console.log('[v0] UI update complete');
+        }
+
+        // Function to display welcome message based on referral status
+        function showWelcomeMessage() {
+            if (!currentUserData) return;
+
+            let message = 'Welcome to Cat Fire! Complete tasks and earn money.';
+            
+            if (currentUserData.referrerId && currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referredBonus?.toFixed(2) || 2.00} as referral bonus!`;
+            } else if (currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referralBonus?.toFixed(2) || 1.00} as signup bonus!`;
+            }
+
+            document.getElementById('welcomeMessage').textContent = message;
+            document.getElementById('welcomeModal').classList.add('active');
+        }
+
+        function closeWelcomeModal() {
+            document.getElementById('welcomeModal').classList.remove('active');
+        }
+
+        // Modified to show active page and update navigation
+        function showPage(pageId) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+
+            // Show selected page
+            document.getElementById(pageId).classList.add('active');
+            currentPage = pageId.replace('Page', '').toLowerCase(); // Update current page tracker
+
+            // Update navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            const navItems = document.querySelectorAll('.nav-item');
+            if (pageId === 'homePage') navItems[0].classList.add('active');
+            if (pageId === 'withdrawPage') navItems[1].classList.add('active');
+            if (pageId === 'referPage') navItems[2].classList.add('active');
+            if (pageId === 'profilePage') navItems[3].classList.add('active');
+        }
+
+        // Added checkVPN function
+        async function checkVPN() {
+            try {
+                console.log('[v0] Checking for VPN...');
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
+                
+                console.log('[v0] IP Info:', data);
+                
+                // Basic VPN/Proxy detection based on ASN or organization name
+                if (data.org && (
+                    data.org.toLowerCase().includes('vpn') ||
+                    data.org.toLowerCase().includes('proxy') ||
+                    data.org.toLowerCase().includes('hosting') ||
+                    data.org.toLowerCase().includes('datacenter') ||
+                    data.asn && data.asn.toLowerCase().includes('vpn')
+                )) {
+                    console.log('[v0] VPN/Proxy detected');
+                    return true;
+                }
+                console.log('[v0] No VPN detected');
+                return false;
+            } catch (error) {
+                console.log('[v0] VPN detection error:', error);
+                return false; // Assume no VPN if detection fails
+            }
+        }
+
+        // Initialize app when page loads
+        window.addEventListener('load', initApp);
+    </script>
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA7vbuDVd49qNePXsNCJrsMVmj-LCSH3R8",
+            authDomain: "cat-fire-bot.firebaseapp.com",
+            databaseURL: "https://cat-fire-bot-default-rtdb.firebaseio.com",
+            projectId: "cat-fire-bot",
+            storageBucket: "cat-fire-bot.firebasestorage.app",
+            messagingSenderId: "320717959791",
+            appId: "1:320717959791:web:8a6d191972cf263a7d939a"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const rtdb = firebase.database();
+
+        // Global variables
+        let currentUser = null;
+        let currentUserData = null; // Renamed from userData to currentUserData
+        let adminSettings = null;
+        let currentPage = 'home'; // Added to track current page
+        let selectedBet = 'medium'; // Moved from original location
+        let isSpinning = false; // Moved from original location
+
+        // Telegram WebApp
+        const tg = window.Telegram.WebApp;
+
+        // Helper Functions
+        function showLoading() {
+            document.getElementById('loadingScreen').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingScreen').classList.add('hidden');
+        }
+
+        function showVPNWarning() {
+            document.getElementById('vpnWarning').classList.add('active');
+            hideLoading();
+        }
+
+        function showError(message) {
+            showNotification(message, 'error');
+            hideLoading();
+        }
+
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+
+        function isToday(date) {
+            const today = new Date();
+            return date.getDate() === today.getDate() &&
+                   date.getMonth() === today.getMonth() &&
+                   date.getFullYear() === today.getFullYear();
+        }
+
+        // Encapsulate UI update logic
+        function updateUI() {
+            if (!currentUserData) {
+                console.error('[v0] Cannot update UI: currentUserData is null');
+                return;
+            }
+
+            console.log('[v0] Updating UI with user data');
+
+            // Header
+            document.getElementById('userName').textContent = currentUserData.firstName;
+            document.getElementById('userId').textContent = `ID: ${currentUserData.telegramId}`;
+
+            // Balance
+            document.getElementById('userBalance').textContent = currentUserData.balance.toFixed(2);
+
+            // Task rewards and limits
+            if (adminSettings) {
+                document.getElementById('monetagReward').textContent = adminSettings.monetagReward.toFixed(2);
+                document.getElementById('monetagLimit').textContent = adminSettings.monetagLimit;
+                document.getElementById('directLinkReward').textContent = adminSettings.directLinkReward.toFixed(2);
+                document.getElementById('youtubeReward').textContent = adminSettings.youtubeReward.toFixed(2);
+                document.getElementById('loginBonusReward').textContent = adminSettings.loginBonusReward.toFixed(2);
+                document.getElementById('telegramBonusReward').textContent = adminSettings.telegramBonusReward.toFixed(2);
+                document.getElementById('youtubeSubBonusReward').textContent = adminSettings.youtubeSubBonusReward.toFixed(2);
+                document.getElementById('minWithdraw').textContent = adminSettings.minWithdraw.toFixed(2);
+                document.getElementById('referralBonus').textContent = adminSettings.referralBonus.toFixed(2);
+                document.getElementById('referredBonus').textContent = adminSettings.referredBonus.toFixed(2);
+
+                // Payment methods
+                const paymentMethodSelect = document.getElementById('paymentMethod');
+                paymentMethodSelect.innerHTML = '<option value="">Select Method</option>';
+                adminSettings.paymentMethods.forEach(method => {
+                    const option = document.createElement('option');
+                    option.value = method;
+                    option.textContent = method;
+                    paymentMethodSelect.appendChild(option);
+                });
+            }
+
+            // Daily tasks progress
+            updateTaskProgress();
+
+            // One-time tasks
+            updateOneTimeTasks();
+
+            // Spin count
+            document.getElementById('todaySpins').textContent = currentUserData.dailyTasks.spin.count;
+
+            // Profile page
+            document.getElementById('profileName').textContent = currentUserData.firstName + ' ' + currentUserData.lastName;
+            document.getElementById('profileUsername').textContent = currentUserData.username ? `@${currentUserData.username}` : 'No username';
+            document.getElementById('profileId').textContent = `ID: ${currentUserData.telegramId}`;
+            document.getElementById('profileBalance').textContent = currentUserData.balance.toFixed(2);
+            document.getElementById('profileTaskEarnings').textContent = `$${currentUserData.taskEarnings.toFixed(2)}`;
+            document.getElementById('profileGameEarnings').textContent = `$${currentUserData.gameEarnings.toFixed(2)}`;
+            document.getElementById('profileReferralCount').textContent = currentUserData.totalReferrals;
+
+            // Referral page
+            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${currentUserData.telegramId}`;
+            document.getElementById('referralLink').textContent = referralLink;
+            document.getElementById('totalReferrals').textContent = currentUserData.totalReferrals;
+            document.getElementById('referralEarnings').textContent = currentUserData.referralEarnings.toFixed(2);
+
+            // Load referral list
+            loadReferralList();
+
+            // Load withdrawal history
+            loadWithdrawalHistory();
+
+            // Load top withdrawers
+            loadTopWithdrawers();
+
+            // Draw spin wheel
+            drawSpinWheel();
+
+            // Draw earnings chart
+            drawEarningsChart();
+
+            console.log('[v0] UI update complete');
+        }
+
+        // Function to display welcome message based on referral status
+        function showWelcomeMessage() {
+            if (!currentUserData) return;
+
+            let message = 'Welcome to Cat Fire! Complete tasks and earn money.';
+            
+            if (currentUserData.referrerId && currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referredBonus?.toFixed(2) || 2.00} as referral bonus!`;
+            } else if (currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referralBonus?.toFixed(2) || 1.00} as signup bonus!`;
+            }
+
+            document.getElementById('welcomeMessage').textContent = message;
+            document.getElementById('welcomeModal').classList.add('active');
+        }
+
+        function closeWelcomeModal() {
+            document.getElementById('welcomeModal').classList.remove('active');
+        }
+
+        // Modified to show active page and update navigation
+        function showPage(pageId) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+
+            // Show selected page
+            document.getElementById(pageId).classList.add('active');
+            currentPage = pageId.replace('Page', '').toLowerCase(); // Update current page tracker
+
+            // Update navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            const navItems = document.querySelectorAll('.nav-item');
+            if (pageId === 'homePage') navItems[0].classList.add('active');
+            if (pageId === 'withdrawPage') navItems[1].classList.add('active');
+            if (pageId === 'referPage') navItems[2].classList.add('active');
+            if (pageId === 'profilePage') navItems[3].classList.add('active');
+        }
+
+        // Added checkVPN function
+        async function checkVPN() {
+            try {
+                console.log('[v0] Checking for VPN...');
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
+                
+                console.log('[v0] IP Info:', data);
+                
+                // Basic VPN/Proxy detection based on ASN or organization name
+                if (data.org && (
+                    data.org.toLowerCase().includes('vpn') ||
+                    data.org.toLowerCase().includes('proxy') ||
+                    data.org.toLowerCase().includes('hosting') ||
+                    data.org.toLowerCase().includes('datacenter') ||
+                    data.asn && data.asn.toLowerCase().includes('vpn')
+                )) {
+                    console.log('[v0] VPN/Proxy detected');
+                    return true;
+                }
+                console.log('[v0] No VPN detected');
+                return false;
+            } catch (error) {
+                console.log('[v0] VPN detection error:', error);
+                return false; // Assume no VPN if detection fails
+            }
+        }
+
+        // Initialize app when page loads
+        window.addEventListener('load', initApp);
+    </script>
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA7vbuDVd49qNePXsNCJrsMVmj-LCSH3R8",
+            authDomain: "cat-fire-bot.firebaseapp.com",
+            databaseURL: "https://cat-fire-bot-default-rtdb.firebaseio.com",
+            projectId: "cat-fire-bot",
+            storageBucket: "cat-fire-bot.firebasestorage.app",
+            messagingSenderId: "320717959791",
+            appId: "1:320717959791:web:8a6d191972cf263a7d939a"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const rtdb = firebase.database();
+
+        // Global variables
+        let currentUser = null;
+        let currentUserData = null; // Renamed from userData to currentUserData
+        let adminSettings = null;
+        let currentPage = 'home'; // Added to track current page
+        let selectedBet = 'medium'; // Moved from original location
+        let isSpinning = false; // Moved from original location
+
+        // Telegram WebApp
+        const tg = window.Telegram.WebApp;
+
+        // Helper Functions
+        function showLoading() {
+            document.getElementById('loadingScreen').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingScreen').classList.add('hidden');
+        }
+
+        function showVPNWarning() {
+            document.getElementById('vpnWarning').classList.add('active');
+            hideLoading();
+        }
+
+        function showError(message) {
+            showNotification(message, 'error');
+            hideLoading();
+        }
+
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+
+        function isToday(date) {
+            const today = new Date();
+            return date.getDate() === today.getDate() &&
+                   date.getMonth() === today.getMonth() &&
+                   date.getFullYear() === today.getFullYear();
+        }
+
+        // Encapsulate UI update logic
+        function updateUI() {
+            if (!currentUserData) {
+                console.error('[v0] Cannot update UI: currentUserData is null');
+                return;
+            }
+
+            console.log('[v0] Updating UI with user data');
+
+            // Header
+            document.getElementById('userName').textContent = currentUserData.firstName;
+            document.getElementById('userId').textContent = `ID: ${currentUserData.telegramId}`;
+
+            // Balance
+            document.getElementById('userBalance').textContent = currentUserData.balance.toFixed(2);
+
+            // Task rewards and limits
+            if (adminSettings) {
+                document.getElementById('monetagReward').textContent = adminSettings.monetagReward.toFixed(2);
+                document.getElementById('monetagLimit').textContent = adminSettings.monetagLimit;
+                document.getElementById('directLinkReward').textContent = adminSettings.directLinkReward.toFixed(2);
+                document.getElementById('youtubeReward').textContent = adminSettings.youtubeReward.toFixed(2);
+                document.getElementById('loginBonusReward').textContent = adminSettings.loginBonusReward.toFixed(2);
+                document.getElementById('telegramBonusReward').textContent = adminSettings.telegramBonusReward.toFixed(2);
+                document.getElementById('youtubeSubBonusReward').textContent = adminSettings.youtubeSubBonusReward.toFixed(2);
+                document.getElementById('minWithdraw').textContent = adminSettings.minWithdraw.toFixed(2);
+                document.getElementById('referralBonus').textContent = adminSettings.referralBonus.toFixed(2);
+                document.getElementById('referredBonus').textContent = adminSettings.referredBonus.toFixed(2);
+
+                // Payment methods
+                const paymentMethodSelect = document.getElementById('paymentMethod');
+                paymentMethodSelect.innerHTML = '<option value="">Select Method</option>';
+                adminSettings.paymentMethods.forEach(method => {
+                    const option = document.createElement('option');
+                    option.value = method;
+                    option.textContent = method;
+                    paymentMethodSelect.appendChild(option);
+                });
+            }
+
+            // Daily tasks progress
+            updateTaskProgress();
+
+            // One-time tasks
+            updateOneTimeTasks();
+
+            // Spin count
+            document.getElementById('todaySpins').textContent = currentUserData.dailyTasks.spin.count;
+
+            // Profile page
+            document.getElementById('profileName').textContent = currentUserData.firstName + ' ' + currentUserData.lastName;
+            document.getElementById('profileUsername').textContent = currentUserData.username ? `@${currentUserData.username}` : 'No username';
+            document.getElementById('profileId').textContent = `ID: ${currentUserData.telegramId}`;
+            document.getElementById('profileBalance').textContent = currentUserData.balance.toFixed(2);
+            document.getElementById('profileTaskEarnings').textContent = `$${currentUserData.taskEarnings.toFixed(2)}`;
+            document.getElementById('profileGameEarnings').textContent = `$${currentUserData.gameEarnings.toFixed(2)}`;
+            document.getElementById('profileReferralCount').textContent = currentUserData.totalReferrals;
+
+            // Referral page
+            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${currentUserData.telegramId}`;
+            document.getElementById('referralLink').textContent = referralLink;
+            document.getElementById('totalReferrals').textContent = currentUserData.totalReferrals;
+            document.getElementById('referralEarnings').textContent = currentUserData.referralEarnings.toFixed(2);
+
+            // Load referral list
+            loadReferralList();
+
+            // Load withdrawal history
+            loadWithdrawalHistory();
+
+            // Load top withdrawers
+            loadTopWithdrawers();
+
+            // Draw spin wheel
+            drawSpinWheel();
+
+            // Draw earnings chart
+            drawEarningsChart();
+
+            console.log('[v0] UI update complete');
+        }
+
+        // Function to display welcome message based on referral status
+        function showWelcomeMessage() {
+            if (!currentUserData) return;
+
+            let message = 'Welcome to Cat Fire! Complete tasks and earn money.';
+            
+            if (currentUserData.referrerId && currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referredBonus?.toFixed(2) || 2.00} as referral bonus!`;
+            } else if (currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referralBonus?.toFixed(2) || 1.00} as signup bonus!`;
+            }
+
+            document.getElementById('welcomeMessage').textContent = message;
+            document.getElementById('welcomeModal').classList.add('active');
+        }
+
+        function closeWelcomeModal() {
+            document.getElementById('welcomeModal').classList.remove('active');
+        }
+
+        // Modified to show active page and update navigation
+        function showPage(pageId) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+
+            // Show selected page
+            document.getElementById(pageId).classList.add('active');
+            currentPage = pageId.replace('Page', '').toLowerCase(); // Update current page tracker
+
+            // Update navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            const navItems = document.querySelectorAll('.nav-item');
+            if (pageId === 'homePage') navItems[0].classList.add('active');
+            if (pageId === 'withdrawPage') navItems[1].classList.add('active');
+            if (pageId === 'referPage') navItems[2].classList.add('active');
+            if (pageId === 'profilePage') navItems[3].classList.add('active');
+        }
+
+        // Added checkVPN function
+        async function checkVPN() {
+            try {
+                console.log('[v0] Checking for VPN...');
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
+                
+                console.log('[v0] IP Info:', data);
+                
+                // Basic VPN/Proxy detection based on ASN or organization name
+                if (data.org && (
+                    data.org.toLowerCase().includes('vpn') ||
+                    data.org.toLowerCase().includes('proxy') ||
+                    data.org.toLowerCase().includes('hosting') ||
+                    data.org.toLowerCase().includes('datacenter') ||
+                    data.asn && data.asn.toLowerCase().includes('vpn')
+                )) {
+                    console.log('[v0] VPN/Proxy detected');
+                    return true;
+                }
+                console.log('[v0] No VPN detected');
+                return false;
+            } catch (error) {
+                console.log('[v0] VPN detection error:', error);
+                return false; // Assume no VPN if detection fails
+            }
+        }
+
+        // Initialize app when page loads
+        window.addEventListener('load', initApp);
+    </script>
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA7vbuDVd49qNePXsNCJrsMVmj-LCSH3R8",
+            authDomain: "cat-fire-bot.firebaseapp.com",
+            databaseURL: "https://cat-fire-bot-default-rtdb.firebaseio.com",
+            projectId: "cat-fire-bot",
+            storageBucket: "cat-fire-bot.firebasestorage.app",
+            messagingSenderId: "320717959791",
+            appId: "1:320717959791:web:8a6d191972cf263a7d939a"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const rtdb = firebase.database();
+
+        // Global variables
+        let currentUser = null;
+        let currentUserData = null; // Renamed from userData to currentUserData
+        let adminSettings = null;
+        let currentPage = 'home'; // Added to track current page
+        let selectedBet = 'medium'; // Moved from original location
+        let isSpinning = false; // Moved from original location
+
+        // Telegram WebApp
+        const tg = window.Telegram.WebApp;
+
+        // Helper Functions
+        function showLoading() {
+            document.getElementById('loadingScreen').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingScreen').classList.add('hidden');
+        }
+
+        function showVPNWarning() {
+            document.getElementById('vpnWarning').classList.add('active');
+            hideLoading();
+        }
+
+        function showError(message) {
+            showNotification(message, 'error');
+            hideLoading();
+        }
+
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+
+        function isToday(date) {
+            const today = new Date();
+            return date.getDate() === today.getDate() &&
+                   date.getMonth() === today.getMonth() &&
+                   date.getFullYear() === today.getFullYear();
+        }
+
+        // Encapsulate UI update logic
+        function updateUI() {
+            if (!currentUserData) {
+                console.error('[v0] Cannot update UI: currentUserData is null');
+                return;
+            }
+
+            console.log('[v0] Updating UI with user data');
+
+            // Header
+            document.getElementById('userName').textContent = currentUserData.firstName;
+            document.getElementById('userId').textContent = `ID: ${currentUserData.telegramId}`;
+
+            // Balance
+            document.getElementById('userBalance').textContent = currentUserData.balance.toFixed(2);
+
+            // Task rewards and limits
+            if (adminSettings) {
+                document.getElementById('monetagReward').textContent = adminSettings.monetagReward.toFixed(2);
+                document.getElementById('monetagLimit').textContent = adminSettings.monetagLimit;
+                document.getElementById('directLinkReward').textContent = adminSettings.directLinkReward.toFixed(2);
+                document.getElementById('youtubeReward').textContent = adminSettings.youtubeReward.toFixed(2);
+                document.getElementById('loginBonusReward').textContent = adminSettings.loginBonusReward.toFixed(2);
+                document.getElementById('telegramBonusReward').textContent = adminSettings.telegramBonusReward.toFixed(2);
+                document.getElementById('youtubeSubBonusReward').textContent = adminSettings.youtubeSubBonusReward.toFixed(2);
+                document.getElementById('minWithdraw').textContent = adminSettings.minWithdraw.toFixed(2);
+                document.getElementById('referralBonus').textContent = adminSettings.referralBonus.toFixed(2);
+                document.getElementById('referredBonus').textContent = adminSettings.referredBonus.toFixed(2);
+
+                // Payment methods
+                const paymentMethodSelect = document.getElementById('paymentMethod');
+                paymentMethodSelect.innerHTML = '<option value="">Select Method</option>';
+                adminSettings.paymentMethods.forEach(method => {
+                    const option = document.createElement('option');
+                    option.value = method;
+                    option.textContent = method;
+                    paymentMethodSelect.appendChild(option);
+                });
+            }
+
+            // Daily tasks progress
+            updateTaskProgress();
+
+            // One-time tasks
+            updateOneTimeTasks();
+
+            // Spin count
+            document.getElementById('todaySpins').textContent = currentUserData.dailyTasks.spin.count;
+
+            // Profile page
+            document.getElementById('profileName').textContent = currentUserData.firstName + ' ' + currentUserData.lastName;
+            document.getElementById('profileUsername').textContent = currentUserData.username ? `@${currentUserData.username}` : 'No username';
+            document.getElementById('profileId').textContent = `ID: ${currentUserData.telegramId}`;
+            document.getElementById('profileBalance').textContent = currentUserData.balance.toFixed(2);
+            document.getElementById('profileTaskEarnings').textContent = `$${currentUserData.taskEarnings.toFixed(2)}`;
+            document.getElementById('profileGameEarnings').textContent = `$${currentUserData.gameEarnings.toFixed(2)}`;
+            document.getElementById('profileReferralCount').textContent = currentUserData.totalReferrals;
+
+            // Referral page
+            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${currentUserData.telegramId}`;
+            document.getElementById('referralLink').textContent = referralLink;
+            document.getElementById('totalReferrals').textContent = currentUserData.totalReferrals;
+            document.getElementById('referralEarnings').textContent = currentUserData.referralEarnings.toFixed(2);
+
+            // Load referral list
+            loadReferralList();
+
+            // Load withdrawal history
+            loadWithdrawalHistory();
+
+            // Load top withdrawers
+            loadTopWithdrawers();
+
+            // Draw spin wheel
+            drawSpinWheel();
+
+            // Draw earnings chart
+            drawEarningsChart();
+
+            console.log('[v0] UI update complete');
+        }
+
+        // Function to display welcome message based on referral status
+        function showWelcomeMessage() {
+            if (!currentUserData) return;
+
+            let message = 'Welcome to Cat Fire! Complete tasks and earn money.';
+            
+            if (currentUserData.referrerId && currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referredBonus?.toFixed(2) || 2.00} as referral bonus!`;
+            } else if (currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referralBonus?.toFixed(2) || 1.00} as signup bonus!`;
+            }
+
+            document.getElementById('welcomeMessage').textContent = message;
+            document.getElementById('welcomeModal').classList.add('active');
+        }
+
+        function closeWelcomeModal() {
+            document.getElementById('welcomeModal').classList.remove('active');
+        }
+
+        // Modified to show active page and update navigation
+        function showPage(pageId) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+
+            // Show selected page
+            document.getElementById(pageId).classList.add('active');
+            currentPage = pageId.replace('Page', '').toLowerCase(); // Update current page tracker
+
+            // Update navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            const navItems = document.querySelectorAll('.nav-item');
+            if (pageId === 'homePage') navItems[0].classList.add('active');
+            if (pageId === 'withdrawPage') navItems[1].classList.add('active');
+            if (pageId === 'referPage') navItems[2].classList.add('active');
+            if (pageId === 'profilePage') navItems[3].classList.add('active');
+        }
+
+        // Added checkVPN function
+        async function checkVPN() {
+            try {
+                console.log('[v0] Checking for VPN...');
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
+                
+                console.log('[v0] IP Info:', data);
+                
+                // Basic VPN/Proxy detection based on ASN or organization name
+                if (data.org && (
+                    data.org.toLowerCase().includes('vpn') ||
+                    data.org.toLowerCase().includes('proxy') ||
+                    data.org.toLowerCase().includes('hosting') ||
+                    data.org.toLowerCase().includes('datacenter') ||
+                    data.asn && data.asn.toLowerCase().includes('vpn')
+                )) {
+                    console.log('[v0] VPN/Proxy detected');
+                    return true;
+                }
+                console.log('[v0] No VPN detected');
+                return false;
+            } catch (error) {
+                console.log('[v0] VPN detection error:', error);
+                return false; // Assume no VPN if detection fails
+            }
+        }
+
+        // Initialize app when page loads
+        window.addEventListener('load', initApp);
+    </script>
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA7vbuDVd49qNePXsNCJrsMVmj-LCSH3R8",
+            authDomain: "cat-fire-bot.firebaseapp.com",
+            databaseURL: "https://cat-fire-bot-default-rtdb.firebaseio.com",
+            projectId: "cat-fire-bot",
+            storageBucket: "cat-fire-bot.firebasestorage.app",
+            messagingSenderId: "320717959791",
+            appId: "1:320717959791:web:8a6d191972cf263a7d939a"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const rtdb = firebase.database();
+
+        // Global variables
+        let currentUser = null;
+        let currentUserData = null; // Renamed from userData to currentUserData
+        let adminSettings = null;
+        let currentPage = 'home'; // Added to track current page
+        let selectedBet = 'medium'; // Moved from original location
+        let isSpinning = false; // Moved from original location
+
+        // Telegram WebApp
+        const tg = window.Telegram.WebApp;
+
+        // Helper Functions
+        function showLoading() {
+            document.getElementById('loadingScreen').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingScreen').classList.add('hidden');
+        }
+
+        function showVPNWarning() {
+            document.getElementById('vpnWarning').classList.add('active');
+            hideLoading();
+        }
+
+        function showError(message) {
+            showNotification(message, 'error');
+            hideLoading();
+        }
+
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+
+        function isToday(date) {
+            const today = new Date();
+            return date.getDate() === today.getDate() &&
+                   date.getMonth() === today.getMonth() &&
+                   date.getFullYear() === today.getFullYear();
+        }
+
+        // Encapsulate UI update logic
+        function updateUI() {
+            if (!currentUserData) {
+                console.error('[v0] Cannot update UI: currentUserData is null');
+                return;
+            }
+
+            console.log('[v0] Updating UI with user data');
+
+            // Header
+            document.getElementById('userName').textContent = currentUserData.firstName;
+            document.getElementById('userId').textContent = `ID: ${currentUserData.telegramId}`;
+
+            // Balance
+            document.getElementById('userBalance').textContent = currentUserData.balance.toFixed(2);
+
+            // Task rewards and limits
+            if (adminSettings) {
+                document.getElementById('monetagReward').textContent = adminSettings.monetagReward.toFixed(2);
+                document.getElementById('monetagLimit').textContent = adminSettings.monetagLimit;
+                document.getElementById('directLinkReward').textContent = adminSettings.directLinkReward.toFixed(2);
+                document.getElementById('youtubeReward').textContent = adminSettings.youtubeReward.toFixed(2);
+                document.getElementById('loginBonusReward').textContent = adminSettings.loginBonusReward.toFixed(2);
+                document.getElementById('telegramBonusReward').textContent = adminSettings.telegramBonusReward.toFixed(2);
+                document.getElementById('youtubeSubBonusReward').textContent = adminSettings.youtubeSubBonusReward.toFixed(2);
+                document.getElementById('minWithdraw').textContent = adminSettings.minWithdraw.toFixed(2);
+                document.getElementById('referralBonus').textContent = adminSettings.referralBonus.toFixed(2);
+                document.getElementById('referredBonus').textContent = adminSettings.referredBonus.toFixed(2);
+
+                // Payment methods
+                const paymentMethodSelect = document.getElementById('paymentMethod');
+                paymentMethodSelect.innerHTML = '<option value="">Select Method</option>';
+                adminSettings.paymentMethods.forEach(method => {
+                    const option = document.createElement('option');
+                    option.value = method;
+                    option.textContent = method;
+                    paymentMethodSelect.appendChild(option);
+                });
+            }
+
+            // Daily tasks progress
+            updateTaskProgress();
+
+            // One-time tasks
+            updateOneTimeTasks();
+
+            // Spin count
+            document.getElementById('todaySpins').textContent = currentUserData.dailyTasks.spin.count;
+
+            // Profile page
+            document.getElementById('profileName').textContent = currentUserData.firstName + ' ' + currentUserData.lastName;
+            document.getElementById('profileUsername').textContent = currentUserData.username ? `@${currentUserData.username}` : 'No username';
+            document.getElementById('profileId').textContent = `ID: ${currentUserData.telegramId}`;
+            document.getElementById('profileBalance').textContent = currentUserData.balance.toFixed(2);
+            document.getElementById('profileTaskEarnings').textContent = `$${currentUserData.taskEarnings.toFixed(2)}`;
+            document.getElementById('profileGameEarnings').textContent = `$${currentUserData.gameEarnings.toFixed(2)}`;
+            document.getElementById('profileReferralCount').textContent = currentUserData.totalReferrals;
+
+            // Referral page
+            const referralLink = `https://t.me/CatFire_Bot/app?startapp=${currentUserData.telegramId}`;
+            document.getElementById('referralLink').textContent = referralLink;
+            document.getElementById('totalReferrals').textContent = currentUserData.totalReferrals;
+            document.getElementById('referralEarnings').textContent = currentUserData.referralEarnings.toFixed(2);
+
+            // Load referral list
+            loadReferralList();
+
+            // Load withdrawal history
+            loadWithdrawalHistory();
+
+            // Load top withdrawers
+            loadTopWithdrawers();
+
+            // Draw spin wheel
+            drawSpinWheel();
+
+            // Draw earnings chart
+            drawEarningsChart();
+
+            console.log('[v0] UI update complete');
+        }
+
+        // Function to display welcome message based on referral status
+        function showWelcomeMessage() {
+            if (!currentUserData) return;
+
+            let message = 'Welcome to Cat Fire! Complete tasks and earn money.';
+            
+            if (currentUserData.referrerId && currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referredBonus?.toFixed(2) || 2.00} as referral bonus!`;
+            } else if (currentUserData.createdAt && isToday(currentUserData.createdAt.toDate())) {
+                message = `Welcome! You received $${adminSettings?.referralBonus?.toFixed(2) || 1.00} as signup bonus!`;
+            }
+
+            document.getElementById('welcomeMessage').textContent = message;
+            document.getElementById('welcomeModal').classList.add('active');
+        }
+
+        function closeWelcomeModal() {
+            document.getElementById('welcomeModal').classList.remove('active');
+        }
+
+        // Modified to show active page and update navigation
+        function showPage(pageId) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+
+            // Show selected page
+            document.getElementById(pageId).classList.add('active');
+            currentPage = pageId.replace('Page', '').toLowerCase(); // Update current page tracker
+
+            // Update navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            const navItems = document.querySelectorAll('.nav-item');
+            if (pageId === 'homePage') navItems[0].classList.add('active');
+            if (pageId === 'withdrawPage') navItems[1].classList.add('active');
+            if (pageId === 'referPage') navItems[2].classList.add('active');
+            if (pageId === 'profilePage') navItems[3].classList.add('active');
+        }
+
+        // Added checkVPN function
+        async function checkVPN() {
+            try {
+                console.log('[v0] Checking for VPN...');
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
+                
+                console.log('[v0] IP Info:', data);
+                
+                // Basic VPN/Proxy detection based on ASN or organization name
+                if (data.org && (
+                    data.org.toLowerCase().includes('vpn') ||
+                    data.org.toLowerCase().includes('proxy') ||
+                    data.org.toLowerCase().includes('hosting') ||
+                    data.org.toLowerCase().includes('datacenter') ||
+                    data.asn && data.asn.toLowerCase().includes('vpn')
+                )) {
+                    console.log('[v0] VPN/Proxy detected');
+                    return true;
+                }
+                console.log('[v0] No VPN detected');
+                return false;
+            } catch (error) {
+                console.log('[v0] VPN detection error:', error);
+                return false; // Assume no VPN if detection fails
+            }
         }
 
         // Initialize app when page loads
