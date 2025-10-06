@@ -1526,12 +1526,16 @@
         console.log('[v0] User data initialized with bonus:', signupBonus);
     }
 
-    // Get Referrer from URL
-    function getReferrerFromUrl() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const startParam = urlParams.get('tgWebAppStartParam');
-        return startParam || null;
+// Get Referrer from URL - নতুন লজিক
+function getReferrerFromUrl() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const startParam = urlParams.get('tgWebAppStartParam');
+    
+    if (startParam && startParam.startsWith('ref_')) {
+        return startParam.replace('ref_', '');
     }
+    return null;
+}
 
     // Update Referrer
     async function updateReferrer(referrerId, newUserId, newUserName) {
@@ -1653,24 +1657,41 @@
         }
     }
 
-    // Check Referral
-    async function checkReferral() {
-        const referrerId = getReferrerFromUrl();
-        if (referrerId && userData && !userData.referrerId) {
-            const telegramUser = tg.initDataUnsafe?.user;
-            const userId = telegramUser.id.toString();
+// Check Referral - সম্পূর্ণ ফাংশনটি রিপ্লেস করুন
+async function checkReferral() {
+    const referrerId = getReferrerFromUrl();
+    
+    if (referrerId && userData && !userData.referrerId) {
+        const telegramUser = tg.initDataUnsafe?.user;
+        const userId = telegramUser.id.toString();
+        
+        // নিজেকে রেফার করতে পারবে না
+        if (referrerId !== userId) {
+            console.log('[v0] Referral detected:', referrerId, '->', userId);
             
-            if (referrerId !== userId) {
+            try {
+                // রেফারার আপডেট
                 await updateReferrer(referrerId, userId, userData.firstName);
                 
-                // Update current user's referrer
+                // বর্তমান ইউজারের রেফারার আইডি সেট করুন
                 await db.collection('users').doc(userId).update({
                     referrerId: referrerId
                 });
+                
+                // রিফ্রেশ করে নতুন ডেটা লোড করুন
+                await loadUserData();
+                updateUI();
+                
+                console.log('[v0] Referral processed successfully');
+                
+            } catch (error) {
+                console.error('[v0] Error processing referral:', error);
             }
+        } else {
+            console.log('[v0] Self-referral attempt blocked');
         }
     }
-
+}
     // Update UI
     function updateUI() {
         if (!userData) return;
@@ -1725,7 +1746,8 @@
         document.getElementById('profileReferralCount').textContent = userData.totalReferrals || 0;
 
         // Referral page
-        const referralLink = `https://t.me/CatFire_Bot/app?startapp=${userData.telegramId}`;
+        // Referral page - নতুন লিংক ফরম্যাট
+const referralLink = `https://t.me/CatFire_Bot/app?startapp=ref_${userData.telegramId}`;
         document.getElementById('referralLink').textContent = referralLink;
         document.getElementById('totalReferrals').textContent = userData.totalReferrals || 0;
         document.getElementById('referralEarnings').textContent = (userData.referralEarnings || 0).toFixed(2);
@@ -2296,24 +2318,28 @@
         });
     }
 
-    // Copy Referral Link
-    function copyReferralLink() {
-        const link = document.getElementById('referralLink').textContent;
-        navigator.clipboard.writeText(link);
-        showNotification('লিংক কপি করা হয়েছে', 'success');
-    }
+    // Copy Referral Link - এই ফাংশনটি আপডেট করুন
+function copyReferralLink() {
+    const link = `https://t.me/CatFire_Bot/app?startapp=ref_${userData.telegramId}`;
+    navigator.clipboard.writeText(link);
+    showNotification('রেফারেল লিংক কপি করা হয়েছে!', 'success');
+}
 
-    // Share Referral Link
-    function shareReferralLink() {
-        const link = document.getElementById('referralLink').textContent;
-        const text = `Cat Fire এ যোগ দিন এবং অর্থ উপার্জন করুন! আমার রেফারেল লিংক: ${link}`;
-        
-        if (tg.openTelegramLink) {
-            tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`);
-        } else {
-            window.open(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`, '_blank');
-        }
+    // Share Referral Link - এই ফাংশনটি আপডেট করুন
+function shareReferralLink() {
+    const link = `https://t.me/CatFire_Bot/app?startapp=ref_${userData.telegramId}`;
+    const text = `💰 Cat Fire এ যোগ দিন এবং অর্থ উপার্জন করুন!\n\n` +
+                `🎁 সাইনআপ বোনাস: $2.00\n` +
+                `📊 দৈনিক টাস্ক করে আয় করুন\n` +
+                `🎰 স্পিন গেম খেলে জিতুন\n\n` +
+                `আমার রেফারেল লিংক: ${link}`;
+    
+    if (tg.openTelegramLink) {
+        tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`);
+    } else {
+        window.open(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`, '_blank');
     }
+}
 
     // Load Referral List
     function loadReferralList() {
