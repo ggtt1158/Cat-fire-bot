@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cat Fire - Earn Money</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    
+    
+
+
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
@@ -1528,14 +1532,15 @@
 
 // Get Referrer from URL - নতুন লজিক
 function getReferrerFromUrl() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const startParam = urlParams.get('tgWebAppStartParam');
-    
-    if (startParam && startParam.startsWith('ref_')) {
-        return startParam.replace('ref_', '');
+    // সরাসরি Telegram Web App অবজেক্ট থেকে start_param নেয়া সবচেয়ে নির্ভরযোগ্য
+    const startParam = window.Telegram.WebApp.initDataUnsafe?.start_param;
+
+    if (startParam) {
+        return startParam;
     }
     return null;
 }
+
 
     // Update Referrer
     async function updateReferrer(referrerId, newUserId, newUserName) {
@@ -1747,8 +1752,10 @@ async function checkReferral() {
 
         // Referral page
         // Referral page - নতুন লিংক ফরম্যাট
-const referralLink = `https://t.me/CatFire_Bot/app?startapp=ref_${userData.telegramId}`;
-        document.getElementById('referralLink').textContent = referralLink;
+// Referral page - নতুন লিংক ফরম্যাট
+const referralLink = `https://t.me/CatFire_Bot/app?startapp=${userData.telegramId}`;
+document.getElementById('referralLink').textContent = referralLink;
+
         document.getElementById('totalReferrals').textContent = userData.totalReferrals || 0;
         document.getElementById('referralEarnings').textContent = (userData.referralEarnings || 0).toFixed(2);
 
@@ -2318,28 +2325,29 @@ const referralLink = `https://t.me/CatFire_Bot/app?startapp=ref_${userData.teleg
         });
     }
 
-    // Copy Referral Link - এই ফাংশনটি আপডেট করুন
+// Copy Referral Link - এই ফাংশনটি আপডেট করুন
 function copyReferralLink() {
-    const link = `https://t.me/CatFire_Bot/app?startapp=ref_${userData.telegramId}`;
+    const link = `https://t.me/CatFire_Bot/app?startapp=${userData.telegramId}`;
     navigator.clipboard.writeText(link);
     showNotification('রেফারেল লিংক কপি করা হয়েছে!', 'success');
 }
 
-    // Share Referral Link - এই ফাংশনটি আপডেট করুন
+
+// Share Referral Link - এই ফাংশনটি আপডেট করুন
 function shareReferralLink() {
-    const link = `https://t.me/CatFire_Bot/app?startapp=ref_${userData.telegramId}`;
+    const link = `https://t.me/CatFire_Bot/app?startapp=${userData.telegramId}`;
     const text = `💰 Cat Fire এ যোগ দিন এবং অর্থ উপার্জন করুন!\n\n` +
                 `🎁 সাইনআপ বোনাস: $2.00\n` +
                 `📊 দৈনিক টাস্ক করে আয় করুন\n` +
                 `🎰 স্পিন গেম খেলে জিতুন\n\n` +
                 `আমার রেফারেল লিংক: ${link}`;
-    
     if (tg.openTelegramLink) {
-        tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`);
+        [span_5](start_span)tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`);[span_5](end_span)
     } else {
-        window.open(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`, '_blank');
+        [span_6](start_span)window.open(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`, '_blank');[span_6](end_span)
     }
 }
+
 
     // Load Referral List
     function loadReferralList() {
