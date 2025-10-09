@@ -1657,8 +1657,15 @@
         function generateReferralLink() {
             if (!userData) return 'লোড হচ্ছে...';
             
-            const baseUrl = 'https://t.me/CatFire_Bot';
-            const referralLink = `${baseUrl}?startapp=${userData.telegramId}`;
+            function generateReferralLink() {
+    if (!userData) return 'লোড হচ্ছে...';
+    
+    let baseUrl = 'https://t.me/CatFire_Bot';
+    let referralLink = `${baseUrl}?startapp=${userData.telegramId}`;
+    
+    // নিশ্চিত করি যেন "/app" না থাকে
+    referralLink = referralLink.replace('/app?', '?');
+    
             
             return referralLink;
         }
@@ -1901,58 +1908,26 @@
 
         // Improved Copy Referral Link
         function copyReferralLink() {
-            const referralLink = generateReferralLink();
-            
-            if (navigator.clipboard && window.isSecureContext) {
-                navigator.clipboard.writeText(referralLink).then(() => {
-                    showNotification('রেফারেল লিংক কপি করা হয়েছে!', 'success');
-                }).catch(() => {
-                    fallbackCopyToClipboard(referralLink);
-                });
-            } else {
-                fallbackCopyToClipboard(referralLink);
-            }
-        }
+    let referralLink = generateReferralLink().replace('/app?', '?');
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(referralLink).then(() => {
+            showNotification('রেফারেল লিংক কপি করা হয়েছে!', 'success');
+        }).catch(() => fallbackCopyToClipboard(referralLink));
+    } else {
+        fallbackCopyToClipboard(referralLink);
+    }
+}
 
-        // Fallback copy method
-        function fallbackCopyToClipboard(text) {
-            const textArea = document.createElement('textarea');
-            textArea.value = text;
-            textArea.style.position = 'fixed';
-            textArea.style.left = '-999999px';
-            textArea.style.top = '-999999px';
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            
-            try {
-                document.execCommand('copy');
-                showNotification('রেফারেল লিংক কপি করা হয়েছে!', 'success');
-            } catch (err) {
-                showNotification('কপি করতে সমস্যা হয়েছে', 'error');
-                console.error('Fallback copy failed:', err);
-            }
-            
-            document.body.removeChild(textArea);
-        }
-
-        // Improved Share Referral Link
-        function shareReferralLink() {
-            const referralLink = generateReferralLink();
-            const text = `💰 Cat Fire এ যোগ দিন এবং অর্থ উপার্জন করুন!\n\n` +
-                        `🎁 সাইনআপ বোনাস: $2.00\n` +
-                        `📊 দৈনিক টাস্ক করে আয় করুন\n` +
-                        `🎰 স্পিন গেম খেলে জিতুন\n\n` +
-                        `আমার রেফারেল লিংক: ${referralLink}`;
-            
-            const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent(text)}`;
-            
-            if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.openTelegramLink) {
-                window.Telegram.WebApp.openTelegramLink(shareUrl);
-            } else {
-                window.open(shareUrl, '_blank', 'width=600,height=400');
-            }
-        }
+function shareReferralLink() {
+    let referralLink = generateReferralLink().replace('/app?', '?');
+    const text = `💰 Cat Fire এ যোগ দিন এবং অর্থ উপার্জন করুন!\n\n🎁 সাইনআপ বোনাস: $2.00\n📊 দৈনিক টাস্ক করে আয় করুন\n🎰 স্পিন গেম খেলে জিতুন\n\nআমার রেফারেল লিংক: ${referralLink}`;
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent(text)}`;
+    if (window.Telegram?.WebApp?.openTelegramLink) {
+        window.Telegram.WebApp.openTelegramLink(shareUrl);
+    } else {
+        window.open(shareUrl, '_blank', 'width=600,height=400');
+    }
+}
 
         // Show Ad Modal
         function showAdModal(duration, onComplete) {
